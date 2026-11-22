@@ -55,7 +55,7 @@ func (c *Central) Report(ctx context.Context, b Ban) error {
 	}
 
 	for attempt := 1; ; attempt++ {
-		retry, err := c.post(ctx, body)
+		retry, err := c.post(ctx, c.url, body)
 		if err == nil || !retry || attempt == 3 {
 			return err
 		}
@@ -65,10 +65,34 @@ func (c *Central) Report(ctx context.Context, b Ban) error {
 	}
 }
 
+type Heartbeat struct {
+	Version    string    `json:"version"`
+	Rules      []string  `json:"rules"`
+	ActiveBans int       `json:"active_bans"`
+	StartedAt  time.Time `json:"started_at"`
+}
+
+// Heartbeat tells the central app this agent is alive, at <url>/heartbeat.
+// One attempt: the next one is a pull_interval away anyway.
+func (c *Central) Heartbeat(ctx context.Context, h Heartbeat) error {
+	body, err := json.Marshal(map[string]any{
+		"source":      c.source,
+		"version":     h.Version,
+		"rules":       h.Rules,
+		"active_bans": h.ActiveBans,
+		"started_at":  h.StartedAt.Format(time.RFC3339),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = c.post(ctx, strings.TrimRight(c.url, "/")+"/heartbeat", body)
+	return err
+}
+
 // post sends one signed attempt (fresh timestamp, so a retry is not a replay).
-func (c *Central) post(ctx context.Context, body []byte) (retry bool, err error) {
+func (c *Central) post(ctx context.Context, url string, body []byte) (retry bool, err error) {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
 	if err != nil {
 		return false, err
 	}

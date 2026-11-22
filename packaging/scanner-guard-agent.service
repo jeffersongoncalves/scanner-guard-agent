@@ -8,6 +8,9 @@ Wants=network-online.target
 ExecStart=/usr/bin/scanner-guard-agent run -config /etc/scanner-guard/agent.yaml
 Restart=on-failure
 RestartSec=5s
+# /var/lib/scanner-guard: escalation steps and running bans (state.json)
+StateDirectory=scanner-guard
+StateDirectoryMode=0700
 
 # Root for nft and the logs, but only these two capabilities.
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_READ_SEARCH

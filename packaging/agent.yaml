@@ -16,6 +16,10 @@ central:
 # nftables (default) | none (dry run: log what would be banned)
 firewall: nftables
 
+# Escalation steps and running local bans survive restarts here.
+# state_file: /var/lib/scanner-guard/state.json
+# escalation_lookback: 365d # forget an IP's step after this long without a ban
+
 # Never banned (127.0.0.0/8 and ::1 always are). PUT YOUR OWN IP HERE.
 ignore: []
 

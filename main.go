@@ -69,11 +69,17 @@ func runCmd(args []string) {
 		log.Fatalf("firewall init: %v", err)
 	}
 
+	st, err := loadState(cfg.StateFile)
+	if err != nil {
+		// A corrupt file must not keep the agent down: start over at step one.
+		log.Printf("state %s: %v (starting empty)", cfg.StateFile, err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	log.Printf("scanner-guard-agent %s started: source=%s firewall=%s rules=%d", version, cfg.Source, cfg.Firewall, len(cfg.rules))
-	newAgent(cfg, fw).run(ctx)
+	newAgent(cfg, fw, st).run(ctx)
 	log.Print("stopped")
 }
 

@@ -13,13 +13,15 @@ type Agent struct {
 	cfg     *Config
 	fw      Firewall
 	central *Central // nil: standalone, no reporting or pulling
+	started time.Time
 
-	mu     sync.Mutex
-	banned map[netip.Addr]time.Time // local bans -> expiry
+	mu        sync.Mutex
+	state     *state
+	statePath string // "" = don't persist (tests)
 }
 
-func newAgent(cfg *Config, fw Firewall) *Agent {
-	a := &Agent{cfg: cfg, fw: fw, banned: map[netip.Addr]time.Time{}}
+func newAgent(cfg *Config, fw Firewall, st *state) *Agent {
+	a := &Agent{cfg: cfg, fw: fw, state: st, statePath: cfg.StateFile, started: time.Now()}
 	if cfg.Central.URL != "" {
 		a.central = &Central{
 			url:    cfg.Central.URL,
@@ -32,14 +34,39 @@ func newAgent(cfg *Config, fw Firewall) *Agent {
 }
 
 func (a *Agent) run(ctx context.Context) {
+	a.restore(time.Now())
+
 	var wg sync.WaitGroup
 	for _, r := range a.cfg.rules {
 		wg.Go(func() { a.watch(ctx, r) })
 	}
 	if a.central != nil {
-		wg.Go(func() { a.pullLoop(ctx) })
+		wg.Go(func() { a.centralLoop(ctx) })
 	}
 	wg.Wait()
+}
+
+// restore re-applies the local bans still running before the restart. A ban
+// that is now ignored, or that the firewall rejects, leaves the state: kept,
+// it would make decide() skip that IP as "already banned" while nothing
+// blocks it. Its escalation step stays, so the next ban picks up from there.
+func (a *Agent) restore(now time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.state.prune(now, time.Duration(a.cfg.EscalationLookback))
+	for ip, until := range a.state.Banned {
+		if a.cfg.ignored(hostPrefix(ip)) {
+			delete(a.state.Banned, ip)
+			continue
+		}
+		if err := a.fw.Ban(hostPrefix(ip), until.Sub(now)); err != nil {
+			log.Printf("restore ban %s: %v", ip, err)
+			delete(a.state.Banned, ip)
+		}
+	}
+	if n := len(a.state.Banned); n > 0 {
+		log.Printf("restored %d local bans", n)
+	}
 }
 
 func (a *Agent) watch(ctx context.Context, r *Rule) {
@@ -64,27 +91,58 @@ func (a *Agent) watch(ctx context.Context, r *Rule) {
 			if !ok || a.cfg.ignored(hostPrefix(ip)) {
 				continue
 			}
-			if b := r.Hit(ip, pattern, time.Now()); b != nil {
-				a.handle(ctx, *b)
+			now := time.Now()
+			if hits, trip := r.Hit(ip, now); trip {
+				if b, ok := a.decide(r, ip, pattern, hits, now); ok {
+					a.enforce(ctx, b)
+				}
 			}
 		}
 	}
 }
 
-func (a *Agent) handle(ctx context.Context, b Ban) {
+// decide picks the escalation step and records the ban in the persisted
+// state. false: the IP is already banned (e.g. two rules tripping on it).
+func (a *Agent) decide(r *Rule, ip netip.Addr, pattern string, hits int, now time.Time) (Ban, bool) {
 	a.mu.Lock()
-	for ip, until := range a.banned {
-		if !until.After(b.At) {
-			delete(a.banned, ip)
+	defer a.mu.Unlock()
+
+	lookback := time.Duration(a.cfg.EscalationLookback)
+	a.state.prune(now, lookback)
+	if _, already := a.state.Banned[ip]; already {
+		return Ban{}, false
+	}
+
+	offs := a.state.Offenses[r.Name]
+	if offs == nil {
+		offs = map[netip.Addr]offense{}
+		a.state.Offenses[r.Name] = offs
+	}
+	o := offs[ip] // pruned above if older than lookback, so this restarts at step one
+	o.N++
+	o.Last = now
+	offs[ip] = o
+
+	b := Ban{
+		IP:       ip,
+		Reason:   r.Name,
+		Pattern:  pattern,
+		Hits:     hits,
+		Offense:  o.N,
+		Duration: r.ban[min(o.N, len(r.ban))-1], // the last step repeats
+		At:       now,
+	}
+	a.state.Banned[ip] = now.Add(b.Duration)
+
+	if a.statePath != "" {
+		if err := a.state.save(a.statePath); err != nil {
+			log.Printf("save state: %v", err) // the ban still applies, only persistence is lost
 		}
 	}
-	if _, already := a.banned[b.IP]; already { // e.g. two rules tripping on the same IP
-		a.mu.Unlock()
-		return
-	}
-	a.banned[b.IP] = b.At.Add(b.Duration)
-	a.mu.Unlock()
+	return b, true
+}
 
+func (a *Agent) enforce(ctx context.Context, b Ban) {
 	if err := a.fw.Ban(hostPrefix(b.IP), b.Duration); err != nil {
 		log.Printf("ban %s: %v", b.IP, err) // still reported: the other servers can block it
 	}
@@ -99,7 +157,8 @@ func (a *Agent) handle(ctx context.Context, b Ban) {
 	}
 }
 
-func (a *Agent) pullLoop(ctx context.Context) {
+// centralLoop pulls the denylist and sends a heartbeat every pull_interval.
+func (a *Agent) centralLoop(ctx context.Context) {
 	applied := map[netip.Prefix]time.Time{} // pulled entries -> expiry (zero = static)
 	for {
 		if dl, err := a.central.Pull(ctx); err != nil {
@@ -107,10 +166,31 @@ func (a *Agent) pullLoop(ctx context.Context) {
 		} else {
 			a.apply(dl, applied, time.Now())
 		}
+		if err := a.central.Heartbeat(ctx, a.heartbeat()); err != nil {
+			log.Printf("heartbeat: %v", err)
+		}
 		if !sleep(ctx, time.Duration(a.cfg.Central.PullInterval)) {
 			return
 		}
 	}
+}
+
+func (a *Agent) heartbeat() Heartbeat {
+	rules := make([]string, 0, len(a.cfg.rules))
+	for _, r := range a.cfg.rules {
+		rules = append(rules, r.Name)
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	active := 0
+	for _, until := range a.state.Banned {
+		if until.After(now) {
+			active++
+		}
+	}
+	return Heartbeat{Version: version, Rules: rules, ActiveBans: active, StartedAt: a.started}
 }
 
 // apply brings the firewall in line with the pulled denylist: adds new or
@@ -168,7 +248,7 @@ func (a *Agent) apply(dl *Denylist, applied map[netip.Prefix]time.Time, now time
 func (a *Agent) bannedLocally(ip netip.Addr, now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	until, ok := a.banned[ip]
+	until, ok := a.state.Banned[ip]
 	return ok && until.After(now)
 }
 

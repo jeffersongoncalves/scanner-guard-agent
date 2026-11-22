@@ -11,8 +11,9 @@ import (
 // Replaces <ip> in a pattern; the match is then validated with netip.
 const ipGroup = `(?P<ip>[0-9A-Fa-f:.]{3,45})`
 
-// Rule counts pattern matches per IP and bans once threshold matches land
-// inside window. Owned by a single goroutine: no locking.
+// Rule counts pattern matches per IP and trips once threshold matches land
+// inside window. Owned by a single goroutine: no locking. Escalation (which
+// step of ban applies) lives in the agent's persisted state.
 type Rule struct {
 	Name      string
 	file      string
@@ -24,9 +25,6 @@ type Rule struct {
 	ban       []time.Duration
 
 	hits map[netip.Addr][]time.Time
-	// ponytail: offenses live in memory, so escalation restarts at step one
-	// after an agent restart. Persist them if that matters.
-	offenses map[netip.Addr]int
 }
 
 type Ban struct {
@@ -63,7 +61,6 @@ func newRule(rc RuleConfig) (*Rule, error) {
 		threshold: rc.Threshold,
 		window:    time.Duration(rc.Window),
 		hits:      map[netip.Addr][]time.Time{},
-		offenses:  map[netip.Addr]int{},
 	}
 	for _, d := range rc.Ban {
 		if d <= 0 {
@@ -100,9 +97,9 @@ func (r *Rule) Match(line string) (netip.Addr, string, bool) {
 	return netip.Addr{}, "", false
 }
 
-// Hit records one match and returns a ban once the threshold is reached.
-// Each ban is the next step of the escalation ladder; the last step repeats.
-func (r *Rule) Hit(ip netip.Addr, pattern string, now time.Time) *Ban {
+// Hit records one match; once the threshold is reached it returns the number
+// of hits inside the window and true, and starts counting from zero again.
+func (r *Rule) Hit(ip netip.Addr, now time.Time) (int, bool) {
 	cutoff := now.Add(-r.window)
 	hits := r.hits[ip][:0]
 	for _, t := range r.hits[ip] {
@@ -114,22 +111,11 @@ func (r *Rule) Hit(ip netip.Addr, pattern string, now time.Time) *Ban {
 
 	if len(hits) < r.threshold {
 		r.hits[ip] = hits
-		return nil
+		return 0, false
 	}
 
 	delete(r.hits, ip)
-	r.offenses[ip]++
-	offense := r.offenses[ip]
-
-	return &Ban{
-		IP:       ip,
-		Reason:   r.Name,
-		Pattern:  pattern,
-		Hits:     len(hits),
-		Offense:  offense,
-		Duration: r.ban[min(offense, len(r.ban))-1],
-		At:       now,
-	}
+	return len(hits), true
 }
 
 // Prune drops counters with no hit inside the window, so IPs that never

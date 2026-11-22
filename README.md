@@ -114,6 +114,12 @@ syncs it into nftables. It adds new entries and lifts the ones the central app n
 except bans this agent made itself. Use an `https` URL: the pulled list holds raw IPs and isn't
 signed.
 
+After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
+`version`, `rules`, `active_bans`, `started_at`). On the central app, run the
+`create_scanner_guard_agents_table` migration, then spot dead servers with
+`ScannerGuardAgent::query()->offline()->get()`. Central versions without the endpoint answer
+`404`. The agent logs that and keeps working.
+
 Without `central.url` the agent runs standalone and only bans locally.
 
 ## Manage bans
@@ -126,12 +132,25 @@ nft delete element inet scanner_guard ban4 '{ 203.0.113.7 }'        # unban now 
 A ban that also came from the central app is re-added on the next pull. Unban it there instead
 (`ScannerGuard::unban()`).
 
+## State and restarts
+
+The agent keeps its escalation steps and the local bans still running in `state_file` (default
+`/var/lib/scanner-guard/state.json`, created by the systemd unit's `StateDirectory`). On start it
+recreates its nftables table, re-applies those bans for their remaining time, and the first pull
+brings back the central ones. An escalation step is forgotten once the IP has had no ban for
+`escalation_lookback` (default `365d`), and the ladder starts over:
+
+```yaml
+state_file: /var/lib/scanner-guard/state.json
+escalation_lookback: 365d
+```
+
+A corrupt state file is logged and replaced by an empty one, so it never keeps the agent down.
+
 ## Notes and limits
 
-- Restarting the agent recreates its nftables table. The first pull restores the central bans, but
-  local-only bans (standalone mode) are lost.
-- Escalation counters live in memory, so they restart at the first step after an agent restart.
 - Line timestamps are not parsed: the window is measured on arrival time.
+- Hit counters (below the threshold) live in memory and start from zero after a restart.
 
 ## Build
 
