@@ -1,0 +1,53 @@
+# scanner-guard-agent config. Check a rule before enabling it:
+#   journalctl -u ssh -u sshd --since -1d -o cat | scanner-guard-agent test -
+# Durations: 90s, 10m, 2h, 1d.
+
+# Name of this server in the central ban table (default: hostname).
+# source: vps-01
+
+# laravel-scanner-guard central app (http driver server). Leave url empty
+# to run standalone: bans stay local, nothing is reported or pulled.
+central:
+  url: "" # https://central.example.com/scanner-guard/bans
+  secret_file: /etc/scanner-guard/secret
+  pull_interval: 60s
+  timeout: 5s
+
+# nftables (default) | none (dry run: log what would be banned)
+firewall: nftables
+
+# Never banned (127.0.0.0/8 and ::1 always are). PUT YOUR OWN IP HERE.
+ignore: []
+
+rules:
+  - name: ssh_bruteforce
+    journald: [ssh.service, sshd.service] # Debian/Ubuntu, RHEL/Alma
+    # file: /var/log/auth.log             # or /var/log/secure; without journald
+    patterns:
+      - 'Failed (password|publickey) for (invalid user )?\S+ from <ip> port'
+      - 'Invalid user \S* from <ip> port'
+      - 'Connection closed by authenticating user \S+ <ip> port \d+ \[preauth\]'
+      - 'Disconnected from invalid user \S+ <ip> port'
+      - 'maximum authentication attempts exceeded for .* from <ip>'
+      - 'banner exchange: Connection from <ip> port \d+: invalid format'
+      - 'Unable to negotiate with <ip> port'
+    threshold: 5
+    window: 10m
+    ban: [1d, 7d, 30d] # escalation, the last step repeats
+
+  # Any log with an IP works. Example: nginx probes that never reach PHP.
+  # - name: nginx_scanner
+  #   file: /var/log/nginx/access.log
+  #   patterns:
+  #     - '^<ip> \S+ \S+ \[[^\]]+\] "[A-Z]+ /(wp-login\.php|xmlrpc\.php|\.env|\.git/)'
+  #   threshold: 3
+  #   window: 5m
+  #   ban: [1d, 7d]
+
+  # - name: postfix_sasl
+  #   journald: [postfix.service, postfix@-.service]
+  #   patterns:
+  #     - 'warning: \S+\[<ip>\]: SASL \S+ authentication failed'
+  #   threshold: 5
+  #   window: 10m
+  #   ban: [1d, 7d, 30d]

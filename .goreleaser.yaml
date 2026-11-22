@@ -1,0 +1,54 @@
+version: 2
+project_name: scanner-guard-agent
+
+builds:
+  - env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+
+archives:
+  - formats: [tar.gz]
+    files:
+      - README.md
+      - LICENSE.md
+      - packaging/agent.yaml
+      - packaging/scanner-guard-agent.service
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - package_name: scanner-guard-agent
+    homepage: https://github.com/jeffersongoncalves/scanner-guard-agent
+    maintainer: Jefferson Gonçalves <jeffersongoncalves@users.noreply.github.com>
+    description: Watches server logs for abusive IPs, bans them in nftables and reports to a laravel-scanner-guard central app.
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    recommends: [nftables]
+    contents:
+      - src: packaging/scanner-guard-agent.service
+        dst: /usr/lib/systemd/system/scanner-guard-agent.service
+        file_info: { mode: 0644 }
+      - dst: /etc/scanner-guard
+        type: dir
+        file_info: { mode: 0700 }
+      - src: packaging/agent.yaml
+        dst: /etc/scanner-guard/agent.yaml
+        type: config|noreplace
+        file_info: { mode: 0600 }
+    scripts:
+      postinstall: packaging/postinstall.sh
+
+# Published as a draft, then made public by the workflow once every asset is
+# uploaded: immutable releases reject uploads after publishing.
+release:
+  draft: true
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^ci:", "^chore:"]

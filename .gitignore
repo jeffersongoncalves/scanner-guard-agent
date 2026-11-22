@@ -1,0 +1,4 @@
+/dist/
+/scanner-guard-agent
+*.exe
+/.idea/
