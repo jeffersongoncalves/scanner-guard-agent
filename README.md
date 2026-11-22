@@ -1,3 +1,5 @@
+![Scanner Guard Agent](https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/art/jeffersongoncalves-scanner-guard-agent.png)
+
 # Scanner Guard Agent
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/jeffersongoncalves/scanner-guard-agent/tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/jeffersongoncalves/scanner-guard-agent/actions/workflows/tests.yml)
