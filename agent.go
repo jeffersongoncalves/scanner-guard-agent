@@ -46,14 +46,22 @@ func (a *Agent) run(ctx context.Context) {
 	wg.Wait()
 }
 
-// restore re-applies the local bans still running before the restart.
+// restore re-applies the local bans still running before the restart. A ban
+// that is now ignored, or that the firewall rejects, leaves the state: kept,
+// it would make decide() skip that IP as "already banned" while nothing
+// blocks it. Its escalation step stays, so the next ban picks up from there.
 func (a *Agent) restore(now time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.state.prune(now, time.Duration(a.cfg.EscalationLookback))
 	for ip, until := range a.state.Banned {
+		if a.cfg.ignored(hostPrefix(ip)) {
+			delete(a.state.Banned, ip)
+			continue
+		}
 		if err := a.fw.Ban(hostPrefix(ip), until.Sub(now)); err != nil {
 			log.Printf("restore ban %s: %v", ip, err)
+			delete(a.state.Banned, ip)
 		}
 	}
 	if n := len(a.state.Banned); n > 0 {

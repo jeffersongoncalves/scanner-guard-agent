@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -200,6 +201,39 @@ func TestReportPullAndHeartbeat(t *testing.T) {
 	}
 	if beat["source"] != "vps-01" || beat["version"] != "1.2.3" || beat["active_bans"] != float64(4) || beat["started_at"] != "2023-11-14T22:13:20Z" {
 		t.Errorf("heartbeat = %v", beat)
+	}
+}
+
+type failingFirewall struct{ fakeFirewall }
+
+func (failingFirewall) Ban(netip.Prefix, time.Duration) error { return errors.New("nft: boom") }
+
+func TestRestoreDropsIgnoredAndFailedBans(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	ignored, kept := netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("203.0.113.7")
+	newSt := func() *state {
+		st := newState()
+		st.Banned[ignored] = now.Add(time.Hour)
+		st.Banned[kept] = now.Add(time.Hour)
+		return st
+	}
+	cfg := &Config{ignore: []netip.Prefix{mustTarget("10.0.0.0/8")}, EscalationLookback: Duration(time.Hour)}
+
+	fw := fakeFirewall{}
+	a := newAgent(cfg, fw, newSt())
+	a.restore(now)
+	if _, ok := fw[hostPrefix(ignored)]; ok || len(fw) != 1 {
+		t.Fatalf("firewall = %v, the ignored IP must not be restored", fw)
+	}
+	if _, ok := a.state.Banned[ignored]; ok {
+		t.Error("ignored IP must leave the ban state")
+	}
+
+	// A ban the firewall rejects leaves the state, so the rule can ban the IP again.
+	a = newAgent(cfg, failingFirewall{fakeFirewall{}}, newSt())
+	a.restore(now)
+	if len(a.state.Banned) != 0 {
+		t.Fatalf("state = %v, failed restores must not stay as banned", a.state.Banned)
 	}
 }
 
