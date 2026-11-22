@@ -21,6 +21,9 @@ type Config struct {
 	Ignore   []string      `yaml:"ignore"`
 	Rules    []RuleConfig  `yaml:"rules"`
 
+	StateFile          string   `yaml:"state_file"`
+	EscalationLookback Duration `yaml:"escalation_lookback"`
+
 	rules  []*Rule
 	ignore []netip.Prefix
 	secret string
@@ -93,6 +96,12 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.Central.Timeout == 0 {
 		cfg.Central.Timeout = Duration(5 * time.Second)
+	}
+	if cfg.StateFile == "" {
+		cfg.StateFile = "/var/lib/scanner-guard/state.json"
+	}
+	if cfg.EscalationLookback == 0 {
+		cfg.EscalationLookback = Duration(365 * 24 * time.Hour)
 	}
 
 	for _, s := range append(alwaysIgnore, cfg.Ignore...) {
