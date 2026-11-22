@@ -22,6 +22,7 @@ sshd / nginx / postfix logs ──► agent ──► nftables (local drop)
 - Reads journald (through `journalctl`) or plain files, and follows logrotate and copytruncate.
 - Generic rules: regex patterns with an `<ip>` placeholder, threshold, window and an escalation ladder.
 - Uses its own nftables table (`inet scanner_guard`) and never touches your other rules. It coexists with fail2ban.
+- Drops in `prerouting`, before Docker's DNAT, so a ban also covers published container ports.
 - `test` command replays a log through the rules before anything gets banned.
 
 ## Install

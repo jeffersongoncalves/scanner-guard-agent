@@ -29,6 +29,8 @@ func newFirewall(name string) (Firewall, error) {
 // nftables keeps its own table, so it never touches the host's other rules.
 // Timed bans (single IPs) and static entries (may be CIDRs) live in separate
 // sets: timeouts on interval sets are not reliable on older kernels.
+// The chain hooks prerouting before Docker's DNAT (-100), so one drop covers
+// the host and every published container port (input never sees those).
 type nftables struct{}
 
 const nftSetup = `table inet scanner_guard {}
@@ -38,8 +40,8 @@ table inet scanner_guard {
 	set ban6 { type ipv6_addr; flags timeout; }
 	set static4 { type ipv4_addr; flags interval; }
 	set static6 { type ipv6_addr; flags interval; }
-	chain input {
-		type filter hook input priority -10; policy accept;
+	chain prerouting {
+		type filter hook prerouting priority -300; policy accept;
 		ip saddr @static4 drop
 		ip6 saddr @static6 drop
 		ip saddr @ban4 drop
