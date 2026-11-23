@@ -121,6 +121,9 @@ func TestExampleConfigLoads(t *testing.T) {
 		"Connection closed by authenticating user root 203.0.113.7 port 50022 [preauth]",
 		"Unable to negotiate with 203.0.113.7 port 41234: no matching key exchange method found.",
 		"Failed publickey for git from 203.0.113.7 port 22 ssh2",
+		"Failed keyboard-interactive/pam for invalid user forge from 203.0.113.7 port 46230 ssh2",
+		"Connection closed by invalid user forge 203.0.113.7 port 46230 [preauth]",
+		"Disconnected from authenticating user root 203.0.113.7 port 46230 [preauth]",
 	} {
 		if ip, _, ok := r.Match(line); !ok || ip.String() != "203.0.113.7" {
 			t.Errorf("example sshd rule missed %q", line)
@@ -204,9 +207,60 @@ func TestReportPullAndHeartbeat(t *testing.T) {
 	}
 }
 
+// test -ban exits right after enforce: reports.Wait must cover the central POST.
+func TestEnforceReportsCanBeAwaited(t *testing.T) {
+	got := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got <- body["ip"].(string)
+		w.WriteHeader(201)
+	}))
+	defer srv.Close()
+
+	r := sshRule(t)
+	fw := fakeFirewall{}
+	a := newAgent(&Config{rules: []*Rule{r}, EscalationLookback: Duration(time.Hour)}, fw, newState())
+	a.central = &Central{url: srv.URL, source: "vps-01", secret: "s", client: srv.Client()}
+
+	ip := netip.MustParseAddr("203.0.113.7")
+	b, ok := a.decide(r, ip, "p", 12, time.Now())
+	if !ok {
+		t.Fatal("decide refused a fresh IP")
+	}
+	a.enforce(context.Background(), b)
+	a.reports.Wait()
+
+	select {
+	case sent := <-got:
+		if sent != "203.0.113.7" || fw[hostPrefix(ip)] != time.Hour {
+			t.Fatalf("reported %s, firewall %v", sent, fw)
+		}
+	default:
+		t.Fatal("Wait returned before the report reached the central app")
+	}
+}
+
 type failingFirewall struct{ fakeFirewall }
 
 func (failingFirewall) Ban(netip.Prefix, time.Duration) error { return errors.New("nft: boom") }
+
+func TestFailedBanCanRetry(t *testing.T) {
+	r := sshRule(t) // ban: [1h, 24h]
+	a := newAgent(&Config{rules: []*Rule{r}, EscalationLookback: Duration(time.Hour)}, failingFirewall{fakeFirewall{}}, newState())
+	ip := netip.MustParseAddr("203.0.113.7")
+	now := time.Unix(1_700_000_000, 0)
+
+	b, _ := a.decide(r, ip, "p", 3, now)
+	if err := a.enforce(context.Background(), b); err == nil {
+		t.Fatal("enforce must return the firewall error")
+	}
+	b, ok := a.decide(r, ip, "p", 3, now.Add(time.Minute))
+	if !ok || b.Offense != 2 {
+		t.Fatalf("retry = %+v, %v; want a new ban with the escalation kept", b, ok)
+	}
+}
 
 func TestRestoreDropsIgnoredAndFailedBans(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)

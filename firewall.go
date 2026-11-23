@@ -54,6 +54,16 @@ table inet scanner_guard {
 // restores whatever the central app still lists.
 func (nftables) Init() error { return nft(nftSetup) }
 
+// Ensure creates the table only when it is missing (agent never started),
+// keeping an existing one and its running bans.
+// ponytail: checks the table only, not each set; a hand-edited table needs a restart to be fixed.
+func (n nftables) Ensure() error {
+	if exec.Command("nft", "list", "table", "inet", "scanner_guard").Run() == nil {
+		return nil
+	}
+	return n.Init()
+}
+
 func (nftables) Ban(p netip.Prefix, d time.Duration) error {
 	set, elem := nftSet(p, d), nftElem(p)
 	if strings.HasPrefix(set, "ban") {

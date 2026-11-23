@@ -28,10 +28,10 @@ rules:
     journald: [ssh.service, sshd.service] # Debian/Ubuntu, RHEL/Alma
     # file: /var/log/auth.log             # or /var/log/secure; without journald
     patterns:
-      - 'Failed (password|publickey) for (invalid user )?\S+ from <ip> port'
+      - 'Failed (password|publickey|keyboard-interactive/pam) for (invalid user )?\S+ from <ip> port'
       - 'Invalid user \S* from <ip> port'
-      - 'Connection closed by authenticating user \S+ <ip> port \d+ \[preauth\]'
-      - 'Disconnected from invalid user \S+ <ip> port'
+      - 'Connection closed by (authenticating|invalid) user \S* <ip> port \d+ \[preauth\]'
+      - 'Disconnected from (authenticating|invalid) user \S* <ip> port'
       - 'maximum authentication attempts exceeded for .* from <ip>'
       - 'banner exchange: Connection from <ip> port \d+: invalid format'
       - 'Unable to negotiate with <ip> port'
