@@ -96,7 +96,7 @@ func (a *Agent) watch(ctx context.Context, r *Rule) {
 			now := time.Now()
 			if hits, trip := r.Hit(ip, now); trip {
 				if b, ok := a.decide(r, ip, pattern, hits, now); ok {
-					a.enforce(ctx, b)
+					_ = a.enforce(ctx, b) // logged; the state already lets it retry
 				}
 			}
 		}
@@ -144,11 +144,24 @@ func (a *Agent) decide(r *Rule, ip netip.Addr, pattern string, hits int, now tim
 	return b, true
 }
 
-func (a *Agent) enforce(ctx context.Context, b Ban) {
-	if err := a.fw.Ban(hostPrefix(b.IP), b.Duration); err != nil {
+// enforce blocks b and reports it. A failed block leaves state.Banned (the
+// escalation step stays), so the IP can be banned again instead of being
+// skipped as "already banned" while nothing blocks it.
+func (a *Agent) enforce(ctx context.Context, b Ban) error {
+	err := a.fw.Ban(hostPrefix(b.IP), b.Duration)
+	if err != nil {
 		log.Printf("ban %s: %v", b.IP, err) // still reported: the other servers can block it
+		a.mu.Lock()
+		delete(a.state.Banned, b.IP)
+		if a.statePath != "" {
+			if serr := a.state.save(a.statePath); serr != nil {
+				log.Printf("save state: %v", serr)
+			}
+		}
+		a.mu.Unlock()
+	} else {
+		log.Printf("banned %s rule=%s hits=%d offense=%d for %s", b.IP, b.Reason, b.Hits, b.Offense, b.Duration)
 	}
-	log.Printf("banned %s rule=%s hits=%d offense=%d for %s", b.IP, b.Reason, b.Hits, b.Offense, b.Duration)
 
 	if a.central != nil {
 		a.reports.Go(func() {
@@ -157,6 +170,7 @@ func (a *Agent) enforce(ctx context.Context, b Ban) {
 			}
 		})
 	}
+	return err
 }
 
 // centralLoop pulls the denylist and sends a heartbeat every pull_interval.

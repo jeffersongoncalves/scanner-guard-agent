@@ -246,6 +246,22 @@ type failingFirewall struct{ fakeFirewall }
 
 func (failingFirewall) Ban(netip.Prefix, time.Duration) error { return errors.New("nft: boom") }
 
+func TestFailedBanCanRetry(t *testing.T) {
+	r := sshRule(t) // ban: [1h, 24h]
+	a := newAgent(&Config{rules: []*Rule{r}, EscalationLookback: Duration(time.Hour)}, failingFirewall{fakeFirewall{}}, newState())
+	ip := netip.MustParseAddr("203.0.113.7")
+	now := time.Unix(1_700_000_000, 0)
+
+	b, _ := a.decide(r, ip, "p", 3, now)
+	if err := a.enforce(context.Background(), b); err == nil {
+		t.Fatal("enforce must return the firewall error")
+	}
+	b, ok := a.decide(r, ip, "p", 3, now.Add(time.Minute))
+	if !ok || b.Offense != 2 {
+		t.Fatalf("retry = %+v, %v; want a new ban with the escalation kept", b, ok)
+	}
+}
+
 func TestRestoreDropsIgnoredAndFailedBans(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	ignored, kept := netip.MustParseAddr("10.1.2.3"), netip.MustParseAddr("203.0.113.7")

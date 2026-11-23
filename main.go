@@ -168,8 +168,10 @@ func testCmd(args []string) {
 				mark = "  <- would ban"
 			default:
 				if b, ok := a.decide(r, ip, patterns[r][ip], n, now); ok {
-					a.enforce(ctx, b)
 					mark = fmt.Sprintf("  <- banned %s (offense %d)", b.Duration, b.Offense)
+					if err := a.enforce(ctx, b); err != nil {
+						mark = fmt.Sprintf("  <- BAN FAILED (offense %d, still reported): %v", b.Offense, err)
+					}
 				} else {
 					mark = "  (already banned)"
 				}
@@ -185,11 +187,16 @@ func testCmd(args []string) {
 
 // scanAgent builds an agent for test -ban. It loads and saves the same state
 // file as the daemon, so the escalation ladder carries on, but it does not
-// recreate the nftables table (that would drop every running ban).
+// recreate an existing nftables table (that would drop every running ban).
 func scanAgent(cfg *Config) *Agent {
 	fw, err := newFirewall(cfg.Firewall)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if n, ok := fw.(nftables); ok {
+		if err := n.Ensure(); err != nil {
+			log.Fatalf("firewall init: %v", err)
+		}
 	}
 	st, err := loadState(cfg.StateFile)
 	if err != nil {
