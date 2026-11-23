@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/netip"
 	"os"
 	"os/signal"
 	"sort"
 	"syscall"
+	"time"
 )
 
 var version = "dev"
@@ -46,7 +48,7 @@ func usage() {
 
 Usage:
   scanner-guard-agent run  [-config %s]
-  scanner-guard-agent test [-config %s] [-rule NAME] LOGFILE|-
+  scanner-guard-agent test [-config %s] [-rule NAME] [-ban] LOGFILE|-
   scanner-guard-agent version
 `, version, defaultConfig, defaultConfig)
 }
@@ -85,10 +87,12 @@ func runCmd(args []string) {
 
 // testCmd replays a log file through the rules, so a pattern can be checked
 // before it bans anyone. Line timestamps are unknown, so the window is ignored.
+// With -ban it also bans what it found and reports it to the central app.
 func testCmd(args []string) {
 	fs := flag.NewFlagSet("test", flag.ExitOnError)
 	path := fs.String("config", defaultConfig, "config file")
 	only := fs.String("rule", "", "only test this rule")
+	ban := fs.Bool("ban", false, "ban the IPs over the threshold and report them to the central app (stop the agent first)")
 	_ = fs.Parse(args)
 
 	if fs.NArg() != 1 {
@@ -111,7 +115,8 @@ func testCmd(args []string) {
 		in = f
 	}
 
-	counts := map[*Rule]map[string]int{}
+	counts := map[*Rule]map[netip.Addr]int{}
+	patterns := map[*Rule]map[netip.Addr]string{} // last pattern matched, sent as matched_value
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -119,11 +124,13 @@ func testCmd(args []string) {
 			if *only != "" && r.Name != *only {
 				continue
 			}
-			if ip, _, ok := r.Match(sc.Text()); ok {
+			if ip, p, ok := r.Match(sc.Text()); ok {
 				if counts[r] == nil {
-					counts[r] = map[string]int{}
+					counts[r] = map[netip.Addr]int{}
+					patterns[r] = map[netip.Addr]string{}
 				}
-				counts[r][ip.String()]++
+				counts[r][ip]++
+				patterns[r][ip] = p
 			}
 		}
 	}
@@ -131,11 +138,18 @@ func testCmd(args []string) {
 		log.Fatal(err)
 	}
 
+	var a *Agent
+	if *ban {
+		a = scanAgent(cfg)
+	}
+	ctx := context.Background()
+	now := time.Now()
+
 	for _, r := range cfg.rules {
 		if *only != "" && r.Name != *only {
 			continue
 		}
-		ips := make([]string, 0, len(counts[r]))
+		ips := make([]netip.Addr, 0, len(counts[r]))
 		total := 0
 		for ip, n := range counts[r] {
 			ips = append(ips, ip)
@@ -145,14 +159,41 @@ func testCmd(args []string) {
 
 		fmt.Printf("rule %s: %d matching lines, %d IPs\n", r.Name, total, len(ips))
 		for _, ip := range ips {
-			mark := ""
-			if counts[r][ip] >= r.threshold {
-				mark = "  <- would ban"
-			}
-			if cfg.ignored(mustTarget(ip)) {
+			n, mark := counts[r][ip], ""
+			switch {
+			case cfg.ignored(hostPrefix(ip)):
 				mark = "  (ignored)"
+			case n < r.threshold:
+			case a == nil:
+				mark = "  <- would ban"
+			default:
+				if b, ok := a.decide(r, ip, patterns[r][ip], n, now); ok {
+					a.enforce(ctx, b)
+					mark = fmt.Sprintf("  <- banned %s (offense %d)", b.Duration, b.Offense)
+				} else {
+					mark = "  (already banned)"
+				}
 			}
-			fmt.Printf("  %6d  %s%s\n", counts[r][ip], ip, mark)
+			fmt.Printf("  %6d  %s%s\n", n, ip, mark)
 		}
 	}
+
+	if a != nil {
+		a.reports.Wait() // a one-shot run must not exit before the central POSTs land
+	}
+}
+
+// scanAgent builds an agent for test -ban. It loads and saves the same state
+// file as the daemon, so the escalation ladder carries on, but it does not
+// recreate the nftables table (that would drop every running ban).
+func scanAgent(cfg *Config) *Agent {
+	fw, err := newFirewall(cfg.Firewall)
+	if err != nil {
+		log.Fatal(err)
+	}
+	st, err := loadState(cfg.StateFile)
+	if err != nil {
+		log.Fatalf("state %s: %v", cfg.StateFile, err)
+	}
+	return newAgent(cfg, fw, st)
 }

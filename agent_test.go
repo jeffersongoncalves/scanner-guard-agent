@@ -121,6 +121,9 @@ func TestExampleConfigLoads(t *testing.T) {
 		"Connection closed by authenticating user root 203.0.113.7 port 50022 [preauth]",
 		"Unable to negotiate with 203.0.113.7 port 41234: no matching key exchange method found.",
 		"Failed publickey for git from 203.0.113.7 port 22 ssh2",
+		"Failed keyboard-interactive/pam for invalid user forge from 203.0.113.7 port 46230 ssh2",
+		"Connection closed by invalid user forge 203.0.113.7 port 46230 [preauth]",
+		"Disconnected from authenticating user root 203.0.113.7 port 46230 [preauth]",
 	} {
 		if ip, _, ok := r.Match(line); !ok || ip.String() != "203.0.113.7" {
 			t.Errorf("example sshd rule missed %q", line)
@@ -201,6 +204,41 @@ func TestReportPullAndHeartbeat(t *testing.T) {
 	}
 	if beat["source"] != "vps-01" || beat["version"] != "1.2.3" || beat["active_bans"] != float64(4) || beat["started_at"] != "2023-11-14T22:13:20Z" {
 		t.Errorf("heartbeat = %v", beat)
+	}
+}
+
+// test -ban exits right after enforce: reports.Wait must cover the central POST.
+func TestEnforceReportsCanBeAwaited(t *testing.T) {
+	got := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got <- body["ip"].(string)
+		w.WriteHeader(201)
+	}))
+	defer srv.Close()
+
+	r := sshRule(t)
+	fw := fakeFirewall{}
+	a := newAgent(&Config{rules: []*Rule{r}, EscalationLookback: Duration(time.Hour)}, fw, newState())
+	a.central = &Central{url: srv.URL, source: "vps-01", secret: "s", client: srv.Client()}
+
+	ip := netip.MustParseAddr("203.0.113.7")
+	b, ok := a.decide(r, ip, "p", 12, time.Now())
+	if !ok {
+		t.Fatal("decide refused a fresh IP")
+	}
+	a.enforce(context.Background(), b)
+	a.reports.Wait()
+
+	select {
+	case sent := <-got:
+		if sent != "203.0.113.7" || fw[hostPrefix(ip)] != time.Hour {
+			t.Fatalf("reported %s, firewall %v", sent, fw)
+		}
+	default:
+		t.Fatal("Wait returned before the report reached the central app")
 	}
 }
 

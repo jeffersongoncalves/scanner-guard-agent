@@ -77,6 +77,19 @@ journalctl -u ssh -u sshd --since -1d -o cat | scanner-guard-agent test -
 scanner-guard-agent test -rule nginx_scanner /var/log/nginx/access.log
 ```
 
+Add `-ban` to also ban what the replay found: each IP over the threshold gets the next escalation
+step, is blocked in nftables and reported to the central app. Use it once on install to catch the
+attacks already in the logs. Stop the agent first, both write the same state file:
+
+```bash
+sudo systemctl stop scanner-guard-agent
+sudo journalctl -u ssh -u sshd --since -7d -o cat | sudo scanner-guard-agent test -ban -
+sudo systemctl start scanner-guard-agent
+```
+
+The window is ignored here, so hits spread over the whole period count together. Narrow
+`--since` if that bans too much.
+
 Then start it:
 
 ```bash

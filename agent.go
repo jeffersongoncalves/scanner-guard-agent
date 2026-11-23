@@ -18,6 +18,8 @@ type Agent struct {
 	mu        sync.Mutex
 	state     *state
 	statePath string // "" = don't persist (tests)
+
+	reports sync.WaitGroup // in-flight central reports; one-shot commands wait on it
 }
 
 func newAgent(cfg *Config, fw Firewall, st *state) *Agent {
@@ -149,11 +151,11 @@ func (a *Agent) enforce(ctx context.Context, b Ban) {
 	log.Printf("banned %s rule=%s hits=%d offense=%d for %s", b.IP, b.Reason, b.Hits, b.Offense, b.Duration)
 
 	if a.central != nil {
-		go func() {
+		a.reports.Go(func() {
 			if err := a.central.Report(ctx, b); err != nil {
 				log.Printf("report %s to central: %v", b.IP, err)
 			}
-		}()
+		})
 	}
 }
 
