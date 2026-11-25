@@ -182,6 +182,10 @@ func TestLogClient(t *testing.T) {
 		`tools.example.com 2001:db8::7 - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:     "2001:db8::7",
 		`198.51.100.3 - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 403 rule=sqli-union host=a "x"`:       "198.51.100.3",
 		`unix: - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                             "unix:",
+		`unix: - 203.0.113.9 [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                   "unix:", // an IP-like user name
+		`198.51.100.5 - alice [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                  "198.51.100.5",
+		`192.168.1.1 198.51.100.6 - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:          "198.51.100.6", // an IP as server name
+		`site.example unix: - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                "unix:",
 		`site.example 198.51.100.4 - 203.0.113.9 [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "" ""`: "198.51.100.4", // $remote_user comes after
 		``: "",
 	} {

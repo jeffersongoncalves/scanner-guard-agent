@@ -311,7 +311,7 @@ This is a filter for common probes, not a WAF, and it doesn't fix a vulnerable a
 - To undo: remove the `include` lines, delete the files, reload nginx. Remove the agent rules and restart
   the agent.
 - `nginx-test` reads the request line and User-Agent of the combined format, also with the site in front
-  (`$server_name $remote_addr - ...`): the client is the first IP before the date. It fails on rules it can't
+  (`$server_name $remote_addr - ...`), told apart by where the `-` falls. It fails on rules it can't
   run (`include`, lookaheads) instead of skipping them, and doesn't cover the login limit.
 
 ## Manage bans

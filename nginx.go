@@ -413,21 +413,21 @@ func nginxTest(maps map[string]nginxMap, in io.Reader, out io.Writer) error {
 	return nil
 }
 
-// logClient returns the client of a log line: the first IP before the date, so
-// a format that starts with the site ("$server_name $remote_addr - ...") counts
-// clients, not sites. Without an IP there, the first field.
+// logClient returns the client of a log line, told apart by the layout rather
+// than by what looks like an IP (a server name or a user name can): combined is
+// "$remote_addr - $remote_user [", with the site in front the "-" moves one
+// field to the right ("$server_name $remote_addr - $remote_user [").
 func logClient(line string) string {
 	head, _, _ := strings.Cut(line, " [")
 	fields := strings.Fields(head)
-	for _, f := range fields {
-		if _, err := netip.ParseAddr(f); err == nil {
-			return f
-		}
-	}
-	if len(fields) == 0 {
+	switch {
+	case len(fields) == 0:
 		return ""
+	case len(fields) >= 3 && fields[1] != "-" && fields[2] == "-":
+		return fields[1]
+	default:
+		return fields[0]
 	}
-	return fields[0]
 }
 
 // printable keeps control characters from a log off the terminal.
