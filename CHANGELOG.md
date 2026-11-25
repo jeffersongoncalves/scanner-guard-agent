@@ -2,6 +2,18 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.1.0 - 2026-11-25
+
+### Changelog
+
+* 2bf29bfd331f00b8cffc75f25644f690e6f16085: Update CHANGELOG (@jeffersongoncalves)
+* 0d34ec285dc111e20471423dde9042552dc75024: Update CHANGELOG (@jeffersongoncalves)
+* c7e50d620adf12b9da8e26f2344189c659df87df: Update CHANGELOG (@jeffersongoncalves)
+* 54560525547eaf275539b9681fd8f7754bcf0094: Update CHANGELOG (@jeffersongoncalves)
+* a15d2ad2f1cc8eb9da39a4dd1a3c64f1b8f89cc4: feat: honor an ignore list pulled from the central app (#12) (@jeffersongoncalves)
+* 5f6dcd134f2ef2ffe14877698b4bbe6011442d51: feat: set up nginx to block common attacks (#11) (@jeffersongoncalves)
+* 25804a9b114f68e251b49048f7adb64d2d874049: feat: verify the signature of the denylist response (#13) (@jeffersongoncalves)
+
 ## 2.0.0 - 2026-11-24
 
 ### Breaking change
@@ -25,6 +37,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
 sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 ```
 **Full Changelog**: https://github.com/jeffersongoncalves/scanner-guard-agent/compare/1.1.0...2.0.0
