@@ -13,6 +13,8 @@ central:
   secret_file: /etc/scanner-guard/secret
   pull_interval: 60s
   timeout: 5s
+  # Refuse an unsigned denylist. Turn on once the central app signs it.
+  # require_signed_response: true
 
 # nftables (default) | none (dry run: log what would be banned)
 firewall: nftables

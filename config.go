@@ -37,6 +37,8 @@ type CentralConfig struct {
 	SecretFile   string   `yaml:"secret_file"`
 	PullInterval Duration `yaml:"pull_interval"`
 	Timeout      Duration `yaml:"timeout"`
+
+	RequireSigned bool `yaml:"require_signed_response"`
 }
 
 type RuleConfig struct {
