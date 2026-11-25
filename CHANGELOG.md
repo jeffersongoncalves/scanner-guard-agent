@@ -2,6 +2,15 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 1.1.0 - 2026-11-22
+
+### Changelog
+
+* 15027a43a02e1d0461b394a7942e4dcd2971f401: Create auto-assign.yml (@jeffersongoncalves)
+* 3aadcceebfbc995f66d6dd246cdb139a58dbf045: Merge pull request #4 from jeffersongoncalves/feat/test-ban (@jeffersongoncalves)
+* 9f07b0234224698b66b5d8cf9af1b19356284a67: feat: add test -ban to ban and report IPs from past logs (@jeffersongoncalves)
+* 126a15e564b29e003c7526e3c64258995e78dd51: fix: create missing nftables table and retry failed bans on replay (@jeffersongoncalves)
+
 ## 1.0.1 - 2026-11-22
 
 ### Changelog
