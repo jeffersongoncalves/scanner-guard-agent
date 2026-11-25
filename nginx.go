@@ -24,7 +24,7 @@ import (
 // Starting point for an nginx that blocks common attacks itself. The files
 // belong to the admin once written: nginx-init never overwrites them.
 
-//go:embed packaging/nginx/scanner-guard.conf
+//go:embed packaging/nginx/scanner-guard-rules.conf
 var nginxRulesConf []byte
 
 //go:embed packaging/nginx/server.conf
@@ -45,7 +45,7 @@ var cloudflareRanges = []string{
 
 const (
 	defaultNginxDir = "/etc/nginx"
-	nginxRulesFile  = "conf.d/scanner-guard.conf"
+	nginxRulesFile  = "conf.d/scanner-guard-rules.conf"
 	nginxServerFile = "scanner-guard/server.conf"
 	nginxLoginFile  = "scanner-guard/login.conf"
 	nginxRealIPFile = "conf.d/scanner-guard-realip.conf"
@@ -235,12 +235,12 @@ func (m nginxMap) value(s string) string {
 }
 
 var (
-	nginxMapOpen  = regexp.MustCompile(`^map\s+\S+\s+\$(\w+)\s*\{$`)
+	nginxMapOpen  = regexp.MustCompile(`^map\s+\S+\s+\$(\w+)\s*\{(?:\s*#.*)?$`)
 	nginxMapEntRe = regexp.MustCompile(`^("(?:[^"\\]|\\.)*"|[^\s"]+)\s+("[^"\\]*"|[^\s"]+)\s*;(?:\s*#.*)?$`)
 	nginxUnescape = strings.NewReplacer(`\"`, `"`, `\'`, `'`, `\\`, `\`, `\t`, "\t", `\r`, "\r", `\n`, "\n")
 )
 
-// parseNginxMaps reads the map blocks of scanner-guard.conf, one entry per line
+// parseNginxMaps reads the map blocks of scanner-guard-rules.conf, one entry per line
 // as shipped. A line inside a map it can't evaluate is an error: skipping it
 // would make nginx-test disagree with nginx.
 func parseNginxMaps(conf string) (map[string]nginxMap, error) {
@@ -255,6 +255,8 @@ func parseNginxMaps(conf string) (map[string]nginxMap, error) {
 		if name == "" {
 			if m := nginxMapOpen.FindStringSubmatch(line); m != nil {
 				name, cur = m[1], nginxMap{}
+			} else if strings.HasPrefix(line, "map ") {
+				return nil, fmt.Errorf("%d: not supported by nginx-test: %s", i+1, line)
 			}
 			continue
 		}
@@ -263,7 +265,7 @@ func parseNginxMaps(conf string) (map[string]nginxMap, error) {
 			continue
 		}
 		m := nginxMapEntRe.FindStringSubmatch(line)
-		if m == nil {
+		if m == nil || m[1] == "include" {
 			return nil, fmt.Errorf("%d: not supported by nginx-test: %s", i+1, line)
 		}
 		key, value := nginxToken(m[1]), nginxToken(m[2])
@@ -329,8 +331,8 @@ func nginxRule(maps map[string]nginxMap, uri, agent string) string {
 		p = d
 	}
 	clean := path.Clean("/" + p)
-	if strings.HasSuffix(p, "/") && clean != "/" {
-		clean += "/"
+	if last := p[strings.LastIndex(p, "/")+1:]; (last == "" || last == "." || last == "..") && clean != "/" {
+		clean += "/" // path.Clean drops it, nginx doesn't
 	}
 
 	rule := cmp.Or(maps["sg_uri"].value(uri), maps["sg_path"].value(clean), maps["sg_agent"].value(agent))

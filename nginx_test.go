@@ -128,6 +128,9 @@ func TestNginxExceptions(t *testing.T) {
 		"/search.php" + q:                    "",
 		"/admin/reports/../../a.php" + q:     "sqli-union", // not a way around
 		"/admin/reports/%2e%2e/%2e%2e/a" + q: "sqli-union",
+		"/search.php/." + q:                  "sqli-union", // nginx: /search.php/
+		"/search.php/x/.." + q:               "sqli-union",
+		"/admin/reports/." + q:               "",
 		"/search.php/x" + q:                  "sqli-union",
 		"/p?id=1+%55NION+SELECT+1":           "encoded",
 		"/p?q=caf%C3%A9+%2B+p%C3%A3o":        "",
@@ -144,6 +147,8 @@ func TestParseNginxMapsErrors(t *testing.T) {
 		"map $a $sg_uri {\n\"~*x\" r;\n", // never closed
 		"map $a $sg_uri {\n\"~*(?!x)y\" r;\n}",
 		"map $a $sg_uri {\ninclude other.conf extra;\n}",
+		"map $a $sg_uri {\n\"~x\" r;\ninclude extra.rules;\n}",
+		"map $a $sg_uri\n{\n\"~x\" r;\n}\nmap $b $sg_path {\n\"~x\" r;\n}",
 		"map $a $sg_uri {\ndefault \"\";\n}",
 	} {
 		if _, err := parseNginxMaps(conf); err == nil {
@@ -291,5 +296,30 @@ func TestNginxAgentRules(t *testing.T) {
 	}
 	if len(lines) != 0 {
 		t.Errorf("rules missing from agent.yaml: %v", lines)
+	}
+}
+
+func TestParseNginxMapsComments(t *testing.T) {
+	maps, err := parseNginxMaps("map $request_uri $sg_uri { # rules\n\"~x\" r; # why\n}")
+	if err != nil || nginxRule(maps, "/x", "") != "r" {
+		t.Errorf("%v, %v", maps, err)
+	}
+}
+
+func TestNginxLoginPaths(t *testing.T) {
+	login := shippedMaps(t)["sg_login"]
+	for key, want := range map[string]bool{
+		"POST:/login":            true,
+		"POST:/login.php":        true,
+		"POST:/admin/login/":     true,
+		"POST:/wp-login.php":     true,
+		"GET:/login.php":         false,
+		"POST:/login-help":       false,
+		"POST:/blog/mylogin.php": false,
+		"POST:/contact.php":      false,
+	} {
+		if got := login.value(key) != ""; got != want {
+			t.Errorf("%s: counted = %v, want %v", key, got, want)
+		}
 	}
 }

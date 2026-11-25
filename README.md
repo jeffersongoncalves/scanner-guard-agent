@@ -222,7 +222,7 @@ Behind a proxy or CDN, also pass `-proxy`, with `cloudflare`, IPs or CIDRs (the 
 
 | File in `/etc/nginx` | What it holds |
 |------|---------------|
-| `conf.d/scanner-guard.conf` | exceptions (paths) and rules, one per line |
+| `conf.d/scanner-guard-rules.conf` | exceptions (paths) and rules, one per line |
 | `conf.d/scanner-guard-realip.conf` | client IP behind a proxy (only with `-proxy`) |
 | `scanner-guard/server.conf` | the 403 and its log |
 | `scanner-guard/login.conf` | login rate limit (optional) |
@@ -252,7 +252,13 @@ sudo nginx -t && sudo systemctl reload nginx
 ```
 
 Blocked requests get a `403` and go to `/var/log/nginx/scanner-guard.log` with the name of the rule,
-instead of the site's access log. Login POSTs above the rate get a `429`. To also ban who insists:
+instead of the site's access log. Login POSTs above the rate get a `429`, on the paths listed in
+`scanner-guard-rules.conf` (a route in the query string, as in `index.php?r=login`, isn't seen). A
+`location` with its own `limit_req` doesn't inherit the login limit, repeat the `include`'s `limit_req`
+line there.
+
+To also ban who insists, add to `agent.yaml` and restart the agent
+(`sudo systemctl restart scanner-guard-agent`):
 
 ```yaml
   - name: web_attack
@@ -280,9 +286,10 @@ This is a filter for common probes, not a WAF, and it doesn't fix a vulnerable a
   separators in a row get through. The `encoded` rule covers the first.
 - Use bound parameters in the application. For the rest, ModSecurity or Coraza with the OWASP CRS.
 - The logrotate rule of the nginx package covers the log, as long as it rotates `/var/log/nginx/*.log`.
-- To get the rules of a newer version, move `conf.d/scanner-guard.conf` away, run `nginx-init` and bring
+- To get the rules of a newer version, move `conf.d/scanner-guard-rules.conf` away, run `nginx-init` and bring
   your changes over.
-- To undo: remove the `include` lines and the agent rules, delete the files, reload nginx.
+- To undo: remove the `include` lines, delete the files, reload nginx. Remove the agent rules and restart
+  the agent.
 - `nginx-test` reads the request line and User-Agent of the combined format. It fails on rules it can't
   run (`include`, lookaheads) instead of skipping them, and doesn't cover the login limit.
 
