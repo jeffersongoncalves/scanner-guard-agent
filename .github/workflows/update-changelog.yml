@@ -3,6 +3,15 @@ name: "Update Changelog"
 on:
   release:
     types: [released]
+  # release.yml publishes with GITHUB_TOKEN, whose events don't start workflows.
+  # workflow_dispatch is the exception, so release.yml calls this one directly.
+  # By hand: add a missing release (a version already listed is left as is).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of a published release
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -18,26 +27,36 @@ jobs:
           # Full history so the release date can be read from the tag.
           fetch-depth: 0
           # Create releases with `--target <branch>` (e.g. 2.x), never a commit SHA.
-          ref: ${{ github.event.release.target_commitish }}
+          ref: ${{ github.event.release.target_commitish || github.event.repository.default_branch }}
 
-      - name: Extract release date from git tag
-        id: release_date
+      - name: Read the release
+        id: release
         env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          echo "date=$(git log -1 --date=short --format=%ad "refs/tags/$TAG_NAME")" >> "$GITHUB_OUTPUT"
+          date=$(git log -1 --date=short --format=%ad "refs/tags/$TAG_NAME")
+          body=$(gh release view "$TAG_NAME" --json body --jq .body)
+          delimiter=$(uuidgen)
+          {
+            echo "tag=$TAG_NAME"
+            echo "date=$date"
+            echo "body<<$delimiter"
+            echo "$body"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Update Changelog
         uses: stefanzweifel/changelog-updater-action@f7c43fed0c8760b25199be6eae5c28fc22830ec6 # v1.13.3
         with:
-          release-date: ${{ steps.release_date.outputs.date }}
-          release-notes: ${{ github.event.release.body }}
-          latest-version: ${{ github.event.release.tag_name }}
-          compare-url-target-revision: ${{ github.event.release.target_commitish }}
+          release-date: ${{ steps.release.outputs.date }}
+          release-notes: ${{ steps.release.outputs.body }}
+          latest-version: ${{ steps.release.outputs.tag }}
+          compare-url-target-revision: ${{ github.event.release.target_commitish || github.event.repository.default_branch }}
 
       - name: Commit updated CHANGELOG
         uses: stefanzweifel/git-auto-commit-action@d0b01107b5db882071f96de5dd4b54961ea93f4c # v7
         with:
-          branch: ${{ github.event.release.target_commitish }}
+          branch: ${{ github.event.release.target_commitish || github.event.repository.default_branch }}
           commit_message: Update CHANGELOG
           file_pattern: CHANGELOG.md
