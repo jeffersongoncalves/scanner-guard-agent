@@ -9,3 +9,6 @@ Type=oneshot
 # Reload only: a stopped web server stays stopped.
 ExecCondition=systemctl is-active --quiet %i.service
 ExecStart=systemctl reload %i.service
+# The list may not change again for days: keep trying until the reload works.
+Restart=on-failure
+RestartSec=30s

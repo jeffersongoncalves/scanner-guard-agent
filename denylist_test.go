@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -107,6 +108,47 @@ func TestDenylistWaitsForFirstPull(t *testing.T) {
 	}
 }
 
+// The web denylist must hold central entries the firewall rejected, while
+// applied leaves them out so the next pull retries them.
+func TestDenylistKeepsEntriesTheFirewallRejected(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cfg := &Config{ignore: []netip.Prefix{mustTarget("10.0.0.0/8")}}
+	a := newAgent(cfg, failingFirewall{fakeFirewall{}}, newState())
+	applied := map[netip.Prefix]time.Time{}
+
+	a.setPulled(a.apply(&Denylist{IPBlocklist: []string{"192.0.2.0/24", "10.1.2.3", "bad; entry"}}, applied, now))
+
+	entries, _ := a.denied(now)
+	if len(entries) != 1 || entries[0].prefix != mustTarget("192.0.2.0/24") {
+		t.Errorf("entries = %v, want only 192.0.2.0/24", entries)
+	}
+	if len(applied) != 0 {
+		t.Errorf("applied = %v, a rejected entry must be retried", applied)
+	}
+}
+
+func TestApplyKeepsLatestExpiryOfDuplicates(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	var dl Denylist
+	// Both spellings resolve to the same target; the order must not matter.
+	raw := `{"bans":[
+		{"ip":"203.0.113.7","expires_at":"2023-11-15T22:13:20Z"},
+		{"ip":"::ffff:203.0.113.7","expires_at":"2023-11-14T23:13:20Z"},
+		{"ip":"::ffff:203.0.113.8","expires_at":"2023-11-14T23:13:20Z"},
+		{"ip":"203.0.113.8","expires_at":"2023-11-15T22:13:20Z"}]}`
+	if err := json.Unmarshal([]byte(raw), &dl); err != nil {
+		t.Fatal(err)
+	}
+	fw := fakeFirewall{}
+	newAgent(&Config{}, fw, newState()).apply(&dl, map[netip.Prefix]time.Time{}, now)
+
+	for _, ip := range []string{"203.0.113.7", "203.0.113.8"} {
+		if fw[mustTarget(ip)] != 24*time.Hour {
+			t.Errorf("%s banned for %s, want the latest expiry (24h)", ip, fw[mustTarget(ip)])
+		}
+	}
+}
+
 func TestDenylistConfig(t *testing.T) {
 	load := func(denylists string) error {
 		f := filepath.Join(t.TempDir(), "agent.yaml")
@@ -127,6 +169,10 @@ func TestDenylistConfig(t *testing.T) {
 		"{format: nginx}":                  "must be absolute",
 		"{format: nginx, path: /a/b.conf}, {format: apache, path: /a/c/../b.conf}": "already in use",
 		"{format: nginx, path: /var/lib/scanner-guard/state.json}":                 "already in use",
+		// The staging files of writeAtomic must not collide either.
+		"{format: nginx, path: /var/lib/scanner-guard/state.json.tmp}":            "already in use",
+		"{format: nginx, path: /a/b.conf}, {format: apache, path: /a/b.conf.tmp}": "already in use",
+		"{format: nginx, path: /a/b.conf.tmp}, {format: apache, path: /a/b.conf}": "already in use",
 	} {
 		if err := load(in); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: err = %v, want %q", in, err, want)

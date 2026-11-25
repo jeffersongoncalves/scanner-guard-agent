@@ -174,7 +174,10 @@ RemoteIPTrustedProxy 173.245.48.0/20
 
 <Location "/">
     AuthMerging And
+    # Debian / Ubuntu
     IncludeOptional /var/lib/scanner-guard/apache2-deny*.conf
+    # RHEL / Alma / Rocky: use this line instead
+    # IncludeOptional /var/lib/scanner-guard/httpd-deny*.conf
 </Location>
 ```
 
@@ -193,7 +196,10 @@ sudo systemctl reload nginx
 - The file is checked every 10s and only rewritten when its content changes. Expired bans are removed.
 - After a restart the previous list stays until the first pull succeeds (5 minutes at most).
 - While the agent is stopped the list is frozen, expired bans included.
-- `firewall: none` is a dry run and doesn't write the files. To stop using one, delete it and reload.
+- A failed reload is retried every 30s until it works.
+- `firewall: none` is a dry run and doesn't write the files. An existing one keeps blocking.
+- To stop using a denylist, in this order: remove its `denylists` entry, restart the agent (it would
+  recreate the file otherwise), delete the file, reload the web server.
 - The systemd sandbox only allows `/var/lib/scanner-guard`. Any other path needs a `ReadWritePaths=`
   drop-in, and your own reload unit.
 

@@ -42,7 +42,9 @@ var denylistFormats = map[string]func([]denied) string{
 }
 
 func validateDenylists(cfg *Config) error {
-	seen := map[string]bool{path.Clean(cfg.StateFile): true}
+	// Every file is staged at path+".tmp" (writeAtomic), so that is taken too.
+	state := path.Clean(cfg.StateFile)
+	seen := map[string]bool{state: true, state + ".tmp": true}
 	for _, d := range cfg.Denylists {
 		if denylistFormats[d.Format] == nil {
 			return fmt.Errorf("denylists: unknown format %q (nginx | apache)", d.Format)
@@ -50,11 +52,11 @@ func validateDenylists(cfg *Config) error {
 		if !path.IsAbs(d.Path) {
 			return fmt.Errorf("denylists: path %q must be absolute", d.Path)
 		}
-		if p := path.Clean(d.Path); seen[p] {
+		p := path.Clean(d.Path)
+		if seen[p] || seen[p+".tmp"] {
 			return fmt.Errorf("denylists: path %q is already in use", d.Path)
-		} else {
-			seen[p] = true
 		}
+		seen[p], seen[p+".tmp"] = true, true
 	}
 	return nil
 }
@@ -141,7 +143,7 @@ func (a *Agent) denied(now time.Time) ([]denied, bool) {
 	return out, true
 }
 
-// setPulled publishes the entries applied from the central denylist.
+// setPulled publishes the valid entries of the central denylist.
 func (a *Agent) setPulled(applied map[netip.Prefix]time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
