@@ -55,11 +55,15 @@ func (s *state) save(path string) error {
 	if err != nil {
 		return err
 	}
+	return writeAtomic(path, raw, 0o600)
+}
+
+func writeAtomic(path string, raw []byte, perm fs.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+	if err := os.WriteFile(tmp, raw, perm); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

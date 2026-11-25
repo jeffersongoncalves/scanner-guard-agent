@@ -21,6 +21,8 @@ type Config struct {
 	Ignore   []string      `yaml:"ignore"`
 	Rules    []RuleConfig  `yaml:"rules"`
 
+	Denylists []DenylistConfig `yaml:"denylists"`
+
 	StateFile          string   `yaml:"state_file"`
 	EscalationLookback Duration `yaml:"escalation_lookback"`
 
@@ -127,6 +129,10 @@ func loadConfig(path string) (*Config, error) {
 		if cfg.secret == "" {
 			return nil, errors.New("central.secret_file is empty")
 		}
+	}
+
+	if err := validateDenylists(cfg); err != nil {
+		return nil, err
 	}
 
 	if len(cfg.Rules) == 0 {

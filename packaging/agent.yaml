@@ -16,6 +16,13 @@ central:
 # nftables (default) | none (dry run: log what would be banned)
 firewall: nftables
 
+# Also write the active bans to a web server config. For servers behind a proxy
+# or CDN, where nftables only sees the proxy (see the README: the web server
+# must restore the client IP, and the proxy ranges belong in ignore).
+# denylists:
+#   - format: nginx # nginx | apache
+#     path: /var/lib/scanner-guard/nginx-deny.conf
+
 # Escalation steps and running local bans survive restarts here.
 # state_file: /var/lib/scanner-guard/state.json
 # escalation_lookback: 365d # forget an IP's step after this long without a ban

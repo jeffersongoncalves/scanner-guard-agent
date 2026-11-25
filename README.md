@@ -23,6 +23,7 @@ sshd / nginx / postfix logs ──► agent ──► nftables (local drop)
 - Generic rules: regex patterns with an `<ip>` placeholder, threshold, window and an escalation ladder.
 - Uses its own nftables table (`inet scanner_guard`) and never touches your other rules. It coexists with fail2ban.
 - Drops in `prerouting`, before Docker's DNAT, so a ban also covers published container ports.
+- Optional nginx and Apache denylist files, for servers behind a proxy or CDN.
 - `test` command replays a log through the rules before anything gets banned.
 
 ## Install
@@ -136,6 +137,66 @@ After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartb
 
 Without `central.url` the agent runs standalone and only bans locally.
 
+## Behind a proxy or CDN: nginx and Apache denylists
+
+Behind Cloudflare or a load balancer, nftables only sees the proxy's IP, so it can't block the
+visitor. The agent can also write this server's active bans (its own plus the pulled ones) to a web
+server config file:
+
+```yaml
+ignore: [203.0.113.10, 173.245.48.0/20]   # your own IPs AND every proxy/CDN range
+denylists:
+  - format: nginx                         # nginx | apache
+    path: /var/lib/scanner-guard/nginx-deny.conf
+```
+
+> **Warning:** restore the client IP first (below) and put the proxy ranges in `ignore`. Otherwise the
+> access log holds the proxy's IP, and a rule on it bans the proxy itself. Trust only the proxy's
+> ranges, or anyone can forge the header.
+
+nginx, e.g. `/etc/nginx/conf.d/scanner-guard.conf` (covers every site):
+
+```nginx
+set_real_ip_from 173.245.48.0/20;   # repeat for every proxy range
+real_ip_header CF-Connecting-IP;
+include /var/lib/scanner-guard/nginx-deny*.conf;
+```
+
+A `server` or `location` with its own `allow`/`deny` doesn't inherit the list, repeat the `include`
+there.
+
+Apache 2.4 (`mod_remoteip`), at the end of each virtual host, with `format: apache` and the path
+`/var/lib/scanner-guard/apache2-deny.conf` (`httpd-deny.conf` on RHEL / Alma / Rocky):
+
+```apache
+RemoteIPHeader CF-Connecting-IP
+RemoteIPTrustedProxy 173.245.48.0/20
+
+<Location "/">
+    AuthMerging And
+    IncludeOptional /var/lib/scanner-guard/apache2-deny*.conf
+</Location>
+```
+
+Keep `AuthMerging And`: without it, the list's `Require all granted` replaces your own rules. Also log
+the restored IP: `%a` instead of `%h` in `LogFormat`.
+
+Then reload the web server whenever the list changes. The unit's instance is the service name, and it
+watches `/var/lib/scanner-guard/<service>-deny.conf`:
+
+```bash
+sudo systemctl restart scanner-guard-agent
+sudo systemctl enable --now scanner-guard-reload@nginx.path     # or @apache2.path, @httpd.path
+sudo systemctl reload nginx
+```
+
+- The file is checked every 10s and only rewritten when its content changes. Expired bans are removed.
+- After a restart the previous list stays until the first pull succeeds (5 minutes at most).
+- While the agent is stopped the list is frozen, expired bans included.
+- `firewall: none` is a dry run and doesn't write the files. To stop using one, delete it and reload.
+- The systemd sandbox only allows `/var/lib/scanner-guard`. Any other path needs a `ReadWritePaths=`
+  drop-in, and your own reload unit.
+
 ## Manage bans
 
 ```bash
@@ -145,6 +206,9 @@ nft delete element inet scanner_guard ban4 '{ 203.0.113.7 }'        # unban now 
 
 A ban that also came from the central app is re-added on the next pull. Unban it there instead
 (`ScannerGuard::unban()`).
+
+`nft delete` doesn't touch the nginx/Apache denylists. To lift a local ban from those too, add the IP
+to `ignore` and restart the agent.
 
 ## State and restarts
 

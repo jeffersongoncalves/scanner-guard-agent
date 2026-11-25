@@ -17,7 +17,8 @@ type Agent struct {
 
 	mu        sync.Mutex
 	state     *state
-	statePath string // "" = don't persist (tests)
+	statePath string                     // "" = don't persist (tests)
+	pulled    map[netip.Prefix]time.Time // last applied central entries (zero = static), nil before the first pull
 
 	reports sync.WaitGroup // in-flight central reports; one-shot commands wait on it
 }
@@ -44,6 +45,13 @@ func (a *Agent) run(ctx context.Context) {
 	}
 	if a.central != nil {
 		wg.Go(func() { a.centralLoop(ctx) })
+	}
+	if len(a.cfg.Denylists) > 0 {
+		if a.cfg.Firewall == "none" {
+			log.Print("dry-run: denylists are not written (an existing file keeps blocking)")
+		} else {
+			wg.Go(func() { a.denylistLoop(ctx) })
+		}
 	}
 	wg.Wait()
 }
@@ -181,6 +189,7 @@ func (a *Agent) centralLoop(ctx context.Context) {
 			log.Printf("pull denylist: %v (keeping the last one)", err)
 		} else {
 			a.apply(dl, applied, time.Now())
+			a.setPulled(applied)
 		}
 		if err := a.central.Heartbeat(ctx, a.heartbeat()); err != nil {
 			log.Printf("heartbeat: %v", err)

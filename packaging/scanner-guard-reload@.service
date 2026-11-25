@@ -1,0 +1,11 @@
+[Unit]
+Description=Reload %i (Scanner Guard denylist changed)
+Documentation=https://github.com/jeffersongoncalves/scanner-guard-agent
+# Hitting the start limit would also stop the .path unit for good.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# Reload only: a stopped web server stays stopped.
+ExecCondition=systemctl is-active --quiet %i.service
+ExecStart=systemctl reload %i.service

@@ -15,6 +15,8 @@ archives:
       - LICENSE.md
       - packaging/agent.yaml
       - packaging/scanner-guard-agent.service
+      - packaging/scanner-guard-reload@.path
+      - packaging/scanner-guard-reload@.service
 
 checksum:
   name_template: checksums.txt
@@ -31,6 +33,12 @@ nfpms:
     contents:
       - src: packaging/scanner-guard-agent.service
         dst: /usr/lib/systemd/system/scanner-guard-agent.service
+        file_info: { mode: 0644 }
+      - src: packaging/scanner-guard-reload@.path
+        dst: /usr/lib/systemd/system/scanner-guard-reload@.path
+        file_info: { mode: 0644 }
+      - src: packaging/scanner-guard-reload@.service
+        dst: /usr/lib/systemd/system/scanner-guard-reload@.service
         file_info: { mode: 0644 }
       - dst: /etc/scanner-guard
         type: dir
