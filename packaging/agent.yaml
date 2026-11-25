@@ -29,6 +29,7 @@ firewall: nftables
 # escalation_lookback: 365d # forget an IP's step after this long without a ban
 
 # Never banned (127.0.0.0/8 and ::1 always are). PUT YOUR OWN IP HERE.
+# The central app may add to this list, never remove from it.
 ignore: []
 
 rules:

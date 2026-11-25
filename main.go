@@ -145,8 +145,10 @@ func testCmd(args []string) {
 	}
 
 	var a *Agent
+	isIgnored := cfg.ignored
 	if *ban {
 		a = scanAgent(cfg)
+		isIgnored = a.ignored // also what the central app listed on the last pull
 	}
 	ctx := context.Background()
 	now := time.Now()
@@ -167,7 +169,7 @@ func testCmd(args []string) {
 		for _, ip := range ips {
 			n, mark := counts[r][ip], ""
 			switch {
-			case cfg.ignored(hostPrefix(ip)):
+			case isIgnored(hostPrefix(ip)):
 				mark = "  (ignored)"
 			case n < r.threshold:
 			case a == nil:

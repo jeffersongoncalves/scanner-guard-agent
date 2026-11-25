@@ -13,8 +13,9 @@ import (
 // state survives restarts: escalation steps per rule/IP, and the local bans
 // still running (the nftables table is recreated empty on every start).
 type state struct {
-	Offenses map[string]map[netip.Addr]offense `json:"offenses"` // rule -> IP
-	Banned   map[netip.Addr]time.Time          `json:"banned"`   // IP -> expiry
+	Offenses map[string]map[netip.Addr]offense `json:"offenses"`         // rule -> IP
+	Banned   map[netip.Addr]time.Time          `json:"banned"`           // IP -> expiry
+	Ignore   []netip.Prefix                    `json:"ignore,omitempty"` // the central app's, on top of the config's
 }
 
 type offense struct {

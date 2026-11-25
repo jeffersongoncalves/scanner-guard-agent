@@ -1,9 +1,11 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"log"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 )
@@ -38,12 +40,19 @@ func newAgent(cfg *Config, fw Firewall, st *state) *Agent {
 func (a *Agent) run(ctx context.Context) {
 	a.restore(time.Now())
 
+	// Before watching anything: on the first start the central ignore list must
+	// be in place before the first ban.
+	var first *Denylist
+	if a.central != nil {
+		first = a.pull(ctx)
+	}
+
 	var wg sync.WaitGroup
 	for _, r := range a.cfg.rules {
 		wg.Go(func() { a.watch(ctx, r) })
 	}
 	if a.central != nil {
-		wg.Go(func() { a.centralLoop(ctx) })
+		wg.Go(func() { a.centralLoop(ctx, first) })
 	}
 	if len(a.cfg.Denylists) > 0 {
 		if a.cfg.Firewall == "none" {
@@ -64,7 +73,7 @@ func (a *Agent) restore(now time.Time) {
 	defer a.mu.Unlock()
 	a.state.prune(now, time.Duration(a.cfg.EscalationLookback))
 	for ip, until := range a.state.Banned {
-		if a.cfg.ignored(hostPrefix(ip)) {
+		if a.ignoredLocked(hostPrefix(ip)) {
 			delete(a.state.Banned, ip)
 			continue
 		}
@@ -97,7 +106,7 @@ func (a *Agent) watch(ctx context.Context, r *Rule) {
 			r.Prune(now)
 		case line := <-lines:
 			ip, pattern, ok := r.Match(line)
-			if !ok || a.cfg.ignored(hostPrefix(ip)) {
+			if !ok || a.ignored(hostPrefix(ip)) {
 				continue
 			}
 			now := time.Now()
@@ -111,14 +120,15 @@ func (a *Agent) watch(ctx context.Context, r *Rule) {
 }
 
 // decide picks the escalation step and records the ban in the persisted
-// state. false: the IP is already banned (e.g. two rules tripping on it).
+// state. false: the IP is already banned (e.g. two rules tripping on it), or a
+// pull has just put it on the ignore list.
 func (a *Agent) decide(r *Rule, ip netip.Addr, pattern string, hits int, now time.Time) (Ban, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	lookback := time.Duration(a.cfg.EscalationLookback)
 	a.state.prune(now, lookback)
-	if _, already := a.state.Banned[ip]; already {
+	if _, already := a.state.Banned[ip]; already || a.ignoredLocked(hostPrefix(ip)) {
 		return Ban{}, false
 	}
 
@@ -180,13 +190,25 @@ func (a *Agent) enforce(ctx context.Context, b Ban) error {
 	return err
 }
 
-// centralLoop pulls the denylist and sends a heartbeat every pull_interval.
-func (a *Agent) centralLoop(ctx context.Context) {
+// pull fetches the denylist and puts its ignore list in place. nil: it failed.
+func (a *Agent) pull(ctx context.Context) *Denylist {
+	dl, err := a.central.Pull(ctx)
+	if err != nil {
+		log.Printf("pull denylist: %v (keeping the last one)", err)
+		return nil
+	}
+	if dl.Ignore != nil {
+		a.setIgnore(*dl.Ignore)
+	}
+	return dl
+}
+
+// centralLoop applies the denylist and sends a heartbeat every pull_interval,
+// starting with the one already pulled.
+func (a *Agent) centralLoop(ctx context.Context, dl *Denylist) {
 	applied := map[netip.Prefix]time.Time{} // pulled entries -> expiry (zero = static)
 	for {
-		if dl, err := a.central.Pull(ctx); err != nil {
-			log.Printf("pull denylist: %v (keeping the last one)", err)
-		} else {
+		if dl != nil {
 			a.setPulled(a.apply(dl, applied, time.Now()))
 		}
 		if err := a.central.Heartbeat(ctx, a.heartbeat()); err != nil {
@@ -195,7 +217,72 @@ func (a *Agent) centralLoop(ctx context.Context) {
 		if !sleep(ctx, time.Duration(a.cfg.Central.PullInterval)) {
 			return
 		}
+		dl = a.pull(ctx)
 	}
+}
+
+// setIgnore replaces the central ignore list, kept in the state so a restart
+// with the central app down still honors it, and lifts the local bans it
+// covers. The config's ignore always applies on top.
+func (a *Agent) setIgnore(list []string) {
+	var ignore []netip.Prefix
+	var skipped []string
+	for _, s := range list {
+		p, err := parseTarget(s)
+		if err != nil || tooBroad(p) {
+			skipped = append(skipped, s)
+			continue
+		}
+		ignore = append(ignore, p)
+	}
+	slices.SortFunc(ignore, func(x, y netip.Prefix) int {
+		return cmp.Or(x.Addr().Compare(y.Addr()), cmp.Compare(x.Bits(), y.Bits()))
+	})
+	ignore = slices.Compact(ignore)
+
+	a.mu.Lock()
+	if slices.Equal(ignore, a.state.Ignore) {
+		a.mu.Unlock()
+		return
+	}
+	a.state.Ignore = ignore
+	var lifted []netip.Addr
+	for ip := range a.state.Banned {
+		if a.ignoredLocked(hostPrefix(ip)) {
+			delete(a.state.Banned, ip)
+			lifted = append(lifted, ip)
+		}
+	}
+	if a.statePath != "" {
+		if err := a.state.save(a.statePath); err != nil {
+			log.Printf("save state: %v", err)
+		}
+	}
+	a.mu.Unlock()
+
+	log.Printf("ignore list from central: %d entries", len(ignore))
+	for _, s := range skipped {
+		log.Printf("ignore list from central: skipping %q (invalid or too broad)", s)
+	}
+	for _, ip := range lifted {
+		if err := a.fw.Unban(hostPrefix(ip)); err != nil {
+			log.Printf("unban %s: %v", ip, err)
+			continue
+		}
+		log.Printf("unbanned %s: now on the central ignore list", ip)
+	}
+}
+
+// ignored reports whether p is never to be banned: the config's list plus the
+// central app's.
+func (a *Agent) ignored(p netip.Prefix) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.ignoredLocked(p)
+}
+
+func (a *Agent) ignoredLocked(p netip.Prefix) bool {
+	return a.cfg.ignored(p) || slices.ContainsFunc(a.state.Ignore, p.Overlaps)
 }
 
 func (a *Agent) heartbeat() Heartbeat {
@@ -240,7 +327,7 @@ func (a *Agent) apply(dl *Denylist, applied map[netip.Prefix]time.Time, now time
 	}
 
 	for p, exp := range want {
-		if a.cfg.ignored(p) {
+		if a.ignored(p) {
 			delete(want, p)
 			continue
 		}

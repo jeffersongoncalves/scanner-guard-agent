@@ -58,6 +58,9 @@ type Denylist struct {
 		ExpiresAt time.Time `json:"expires_at"`
 	} `json:"bans"`
 	IPBlocklist []string `json:"ip_blocklist"`
+	// nil: a central app without the feature, or an error body. An empty list
+	// is a list.
+	Ignore *[]string `json:"ignore"`
 }
 
 // sign matches ScannerGuard::sign(): hash_hmac('sha256', timestamp.body, secret).
