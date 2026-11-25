@@ -2,6 +2,33 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.0.0 - 2026-11-24
+
+### Breaking change
+
+- `central.url` must be `https` (plain `http` only for `localhost`, `127.0.0.0/8` and `::1`), redirects included. With a remote `http` URL the agent refuses to start, so switch it to `https` **before** updating (#9).
+
+### New
+
+- nginx and Apache denylists, for servers behind a proxy or CDN, where nftables only sees the proxy. Optional, nothing changes without `denylists` in the config (#7).
+  - The new `scanner-guard-reload@<service>.path` unit reloads the web server when the list changes and retries a failed reload.
+  - Restore the client IP and put the proxy ranges in `ignore` first, see the [README](https://github.com/jeffersongoncalves/scanner-guard-agent/blob/2.0.0/README.md#behind-a-proxy-or-cdn-nginx-and-apache-denylists).
+  
+
+### Fixed
+
+- Two central bans for the same IP in different spellings: the latest expiry now wins (#7).
+
+### Upgrade
+
+```bash
+sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
+curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
+sudo systemctl restart scanner-guard-agent
+
+```
+**Full Changelog**: https://github.com/jeffersongoncalves/scanner-guard-agent/compare/1.1.0...2.0.0
+
 ## 1.1.0 - 2026-11-22
 
 ### Changelog
