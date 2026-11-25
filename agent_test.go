@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -324,5 +328,86 @@ func TestApplyDenylist(t *testing.T) {
 	}
 	if _, ok := fw[mustTarget("192.0.2.0/24")]; ok {
 		t.Error("entry no longer listed must be lifted")
+	}
+}
+
+func TestCentralURLMustBeHTTPS(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.ToSlash(filepath.Join(dir, "secret"))
+	if err := os.WriteFile(secret, []byte("s3cret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	load := func(url string) error {
+		f := filepath.Join(dir, "agent.yaml")
+		yaml := "central: {url: '" + url + "', secret_file: '" + secret + "'}\nrules:\n  - {name: r, file: /x, patterns: ['<ip>'], threshold: 1, window: 1m, ban: [1h]}\n"
+		if err := os.WriteFile(f, []byte(yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := loadConfig(f)
+		return err
+	}
+
+	for _, ok := range []string{
+		"", // standalone
+		"https://central.example.com/bans",
+		"HTTPS://central.example.com/bans",
+		"http://localhost:8000/bans",
+		"http://LOCALHOST/bans",
+		"http://127.0.0.1/bans",
+		"http://[::1]:8000/bans",
+	} {
+		if err := load(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		"http://central.example.com/bans",
+		"http://10.0.0.5/bans",
+		"http://localhost.example.com/bans",
+		"http://127.0.0.1.example.com/bans",
+		"http://localhost@central.example.com/bans",
+		"ftp://localhost/bans",
+		"central.example.com/bans",
+		"https:///bans",
+	} {
+		if err := load(bad); err == nil || !strings.Contains(err.Error(), "central.url") {
+			t.Errorf("%q: err = %v, want it refused", bad, err)
+		}
+	}
+}
+
+// The Go client follows https -> http redirects, which would undo the check.
+func TestCentralRefusesInsecureRedirect(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/insecure":
+			http.Redirect(w, r, "http://central.example.com/bans", http.StatusFound)
+		case "/secure":
+			http.Redirect(w, r, "/bans", http.StatusFound)
+		case "/loop":
+			http.Redirect(w, r, "/loop", http.StatusFound)
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	pull := func(path string) error {
+		cfg := &Config{Source: "vps-01", Central: CentralConfig{URL: srv.URL + path, Timeout: Duration(5 * time.Second)}}
+		c := newAgent(cfg, fakeFirewall{}, newState()).central
+		c.client.Transport = srv.Client().Transport
+		_, err := c.Pull(context.Background())
+		return err
+	}
+
+	if err := pull("/secure"); err != nil {
+		t.Errorf("https redirect: %v", err)
+	}
+	var uerr *url.Error
+	if err := pull("/insecure"); !errors.As(err, &uerr) || !strings.Contains(err.Error(), "must be https") {
+		t.Errorf("http redirect: err = %v, want it refused", err)
+	}
+	if err := pull("/loop"); err == nil {
+		t.Error("a redirect loop must still stop")
 	}
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"net/netip"
 	"sync"
 	"time"
@@ -30,7 +29,7 @@ func newAgent(cfg *Config, fw Firewall, st *state) *Agent {
 			url:    cfg.Central.URL,
 			source: cfg.Source,
 			secret: cfg.secret,
-			client: &http.Client{Timeout: time.Duration(cfg.Central.Timeout)},
+			client: newCentralClient(time.Duration(cfg.Central.Timeout)),
 		}
 	}
 	return a

@@ -126,8 +126,9 @@ ScannerGuardBan::query()->where('source', 'vps-01')->where('reason', 'ssh_brutef
 
 Every `pull_interval` the agent GETs the central denylist (active bans plus `ip_blocklist`) and
 syncs it into nftables. It adds new entries and lifts the ones the central app no longer lists,
-except bans this agent made itself. Use an `https` URL: the pulled list holds raw IPs and isn't
-signed.
+except bans this agent made itself. `central.url` must be `https` (plain `http` only for localhost):
+the pulled list holds raw IPs and isn't signed. The agent refuses to start otherwise, and never
+follows a redirect to `http`.
 
 After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
 `version`, `rules`, `active_bans`, `started_at`). On the central app, run the

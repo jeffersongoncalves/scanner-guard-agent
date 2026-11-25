@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -115,8 +116,12 @@ func loadConfig(path string) (*Config, error) {
 	}
 
 	if cfg.Central.URL != "" {
-		if !strings.HasPrefix(cfg.Central.URL, "https://") {
-			log.Printf("warning: central.url is not https; the pulled denylist is not signed")
+		u, err := url.Parse(cfg.Central.URL)
+		if err == nil {
+			err = requireSecure(u)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("central.url: %w", err)
 		}
 		secret, err := os.ReadFile(cfg.Central.SecretFile)
 		if err != nil {
