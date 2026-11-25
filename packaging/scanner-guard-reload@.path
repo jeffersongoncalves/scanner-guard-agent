@@ -1,0 +1,9 @@
+[Unit]
+Description=Reload %i when its Scanner Guard denylist changes
+Documentation=https://github.com/jeffersongoncalves/scanner-guard-agent
+
+[Path]
+PathChanged=/var/lib/scanner-guard/%i-deny.conf
+
+[Install]
+WantedBy=multi-user.target

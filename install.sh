@@ -39,6 +39,7 @@ install -d -m 0700 /etc/scanner-guard
 
 sed "s#/usr/bin/scanner-guard-agent#$BIN#" "$TMP/packaging/scanner-guard-agent.service" \
   > /etc/systemd/system/scanner-guard-agent.service
+install -m 0644 "$TMP"/packaging/scanner-guard-reload@.path "$TMP"/packaging/scanner-guard-reload@.service /etc/systemd/system/
 systemctl daemon-reload
 
 command -v nft >/dev/null 2>&1 || echo "warning: nft not found, install the nftables package" >&2

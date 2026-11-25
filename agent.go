@@ -17,7 +17,8 @@ type Agent struct {
 
 	mu        sync.Mutex
 	state     *state
-	statePath string // "" = don't persist (tests)
+	statePath string                     // "" = don't persist (tests)
+	pulled    map[netip.Prefix]time.Time // valid entries of the last pull (zero = static), nil before the first pull
 
 	reports sync.WaitGroup // in-flight central reports; one-shot commands wait on it
 }
@@ -44,6 +45,13 @@ func (a *Agent) run(ctx context.Context) {
 	}
 	if a.central != nil {
 		wg.Go(func() { a.centralLoop(ctx) })
+	}
+	if len(a.cfg.Denylists) > 0 {
+		if a.cfg.Firewall == "none" {
+			log.Print("dry-run: denylists are not written (an existing file keeps blocking)")
+		} else {
+			wg.Go(func() { a.denylistLoop(ctx) })
+		}
 	}
 	wg.Wait()
 }
@@ -180,7 +188,7 @@ func (a *Agent) centralLoop(ctx context.Context) {
 		if dl, err := a.central.Pull(ctx); err != nil {
 			log.Printf("pull denylist: %v (keeping the last one)", err)
 		} else {
-			a.apply(dl, applied, time.Now())
+			a.setPulled(a.apply(dl, applied, time.Now()))
 		}
 		if err := a.central.Heartbeat(ctx, a.heartbeat()); err != nil {
 			log.Printf("heartbeat: %v", err)
@@ -211,12 +219,15 @@ func (a *Agent) heartbeat() Heartbeat {
 
 // apply brings the firewall in line with the pulled denylist: adds new or
 // extended entries, lifts the ones the central app no longer lists (unless
-// this agent banned them itself).
-func (a *Agent) apply(dl *Denylist, applied map[netip.Prefix]time.Time, now time.Time) {
+// this agent banned them itself). It returns every valid, non-ignored entry,
+// the ones the firewall rejected included; applied only tracks its successes.
+func (a *Agent) apply(dl *Denylist, applied map[netip.Prefix]time.Time, now time.Time) map[netip.Prefix]time.Time {
 	want := map[netip.Prefix]time.Time{}
 	for _, b := range dl.Bans {
 		if p, err := parseTarget(b.IP); err == nil && b.ExpiresAt.After(now) {
-			want[p] = b.ExpiresAt
+			if b.ExpiresAt.After(want[p]) { // two spellings of one target: the longest ban wins
+				want[p] = b.ExpiresAt
+			}
 		} else if err != nil {
 			log.Printf("pull: skipping invalid ip %q", b.IP)
 		}
@@ -231,6 +242,7 @@ func (a *Agent) apply(dl *Denylist, applied map[netip.Prefix]time.Time, now time
 
 	for p, exp := range want {
 		if a.cfg.ignored(p) {
+			delete(want, p)
 			continue
 		}
 		if old, ok := applied[p]; ok && old.Equal(exp) {
@@ -259,6 +271,7 @@ func (a *Agent) apply(dl *Denylist, applied map[netip.Prefix]time.Time, now time
 			log.Printf("pull: unblock %s: %v", p, err)
 		}
 	}
+	return want
 }
 
 func (a *Agent) bannedLocally(ip netip.Addr, now time.Time) bool {
