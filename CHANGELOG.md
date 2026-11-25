@@ -2,6 +2,36 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.2.0 - 2026-11-25
+
+### New
+
+- `scanner-guard-agent ip IP...` tells what the agent does with an address: the nftables element that blocks it, the local ban and its expiry (or that the block comes from the central app), the offenses per rule, and the `ignore` entry that covers it. Read-only, works with the agent stopped (#15).
+  
+  ```
+  203.0.113.7
+    blocked:   yes, ban4 { 203.0.113.7 timeout 1d expires 23h12m }
+    local ban: until 2026-11-26 20:14 -0300 (23h12m0s left)
+    offense:   web_attack #1, last 2026-11-25 20:14 -0300
+    ignored:   no
+  
+  ```
+
+### Fixed
+
+- `nginx-test` counted sites as clients in logs that start with the site (`$server_name $remote_addr - ...`) (#14).
+
+### Upgrade
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.2.0 sh
+sudo systemctl restart scanner-guard-agent
+
+```
+No config change.
+
+**Full Changelog**: https://github.com/jeffersongoncalves/scanner-guard-agent/compare/2.1.0...2.2.0
+
 ## 2.1.0 - 2026-11-25
 
 ### Changelog
@@ -37,6 +67,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
 sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 ```
