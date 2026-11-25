@@ -6,9 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +22,33 @@ import (
 type Central struct {
 	url, source, secret string
 	client              *http.Client
+}
+
+// newCentralClient never leaves https, not even through a redirect (the
+// default client follows https -> http).
+func newCentralClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects") // the default limit, replaced by this func
+			}
+			return requireSecure(req.URL)
+		},
+	}
+}
+
+// requireSecure refuses plain http: the pulled denylist is not signed, so only
+// TLS keeps others on the path from reading it or adding bans. Loopback never
+// leaves the host.
+func requireSecure(u *url.URL) error {
+	host := u.Hostname()
+	ip, err := netip.ParseAddr(host)
+	loopback := strings.EqualFold(host, "localhost") || err == nil && ip.Unmap().IsLoopback()
+	if host != "" && (u.Scheme == "https" || u.Scheme == "http" && loopback) {
+		return nil
+	}
+	return fmt.Errorf("%s must be https (http only for localhost)", u.Redacted())
 }
 
 type Denylist struct {

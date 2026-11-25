@@ -7,6 +7,7 @@
 
 # laravel-scanner-guard central app (http driver server). Leave url empty
 # to run standalone: bans stay local, nothing is reported or pulled.
+# Must be https (http only for localhost).
 central:
   url: "" # https://central.example.com/scanner-guard/bans
   secret_file: /etc/scanner-guard/secret
