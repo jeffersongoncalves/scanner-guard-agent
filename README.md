@@ -317,6 +317,7 @@ This is a filter for common probes, not a WAF, and it doesn't fix a vulnerable a
 ## Manage bans
 
 ```bash
+scanner-guard-agent ip 203.0.113.7                                  # blocked? local ban, offenses, ignored?
 nft list table inet scanner_guard                                   # everything blocked
 nft delete element inet scanner_guard ban4 '{ 203.0.113.7 }'        # unban now (ban6 for IPv6)
 ```
