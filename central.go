@@ -21,8 +21,14 @@ import (
 // POSTs and signed denylist GETs on the same URL.
 type Central struct {
 	url, source, secret string
+	requireSigned       bool // refuse an unsigned denylist
 	client              *http.Client
 }
+
+const (
+	maxDenylist       = 32 << 20
+	responseTolerance = 5 * time.Minute // same as the central app's for requests
+)
 
 // newCentralClient never leaves https, not even through a redirect (the
 // default client follows https -> http).
@@ -38,9 +44,9 @@ func newCentralClient(timeout time.Duration) *http.Client {
 	}
 }
 
-// requireSecure refuses plain http: the pulled denylist is not signed, so only
-// TLS keeps others on the path from reading it or adding bans. Loopback never
-// leaves the host.
+// requireSecure refuses plain http: the pulled denylist holds raw IPs, and only
+// TLS keeps others on the path from reading it (or changing it, while unsigned
+// ones are accepted). Loopback never leaves the host.
 func requireSecure(u *url.URL) error {
 	host := u.Hostname()
 	ip, err := netip.ParseAddr(host)
@@ -65,6 +71,34 @@ func sign(timestamp, body, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(timestamp + body))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// signResponse matches ScannerGuard::signResponse(): bound to the request it
+// answers, so an older list can't be replayed.
+func signResponse(timestamp, requestSignature, source, body, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(strings.Join([]string{"response", timestamp, requestSignature, source, body}, "\n")))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// verify checks the signature of a denylist response. A missing one passes
+// unless requireSigned (central apps older than signed responses), a wrong one
+// never does.
+func (c *Central) verify(h http.Header, requestSignature string, body []byte, now time.Time) error {
+	ts, sig := h.Get("X-Timestamp"), h.Get("X-Signature")
+	if sig == "" {
+		if c.requireSigned {
+			return errors.New("the response is not signed (central.require_signed_response)")
+		}
+		return nil
+	}
+	if !hmac.Equal([]byte(signResponse(ts, requestSignature, c.source, string(body), c.secret)), []byte(sig)) {
+		return errors.New("the response has an invalid signature")
+	}
+	if sec, err := strconv.ParseInt(ts, 10, 64); err != nil || now.Sub(time.Unix(sec, 0)).Abs() > responseTolerance {
+		return fmt.Errorf("the response timestamp %q is too far from this server's clock", ts)
+	}
+	return nil
 }
 
 func (c *Central) Report(ctx context.Context, b Ban) error {
@@ -154,7 +188,8 @@ func (c *Central) Pull(ctx context.Context) (*Denylist, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Source", c.source)
 	req.Header.Set("X-Timestamp", ts)
-	req.Header.Set("X-Signature", sign(ts, c.source, c.secret))
+	sig := sign(ts, c.source, c.secret)
+	req.Header.Set("X-Signature", sig)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -165,8 +200,19 @@ func (c *Central) Pull(ctx context.Context) (*Denylist, error) {
 		return nil, fmt.Errorf("central answered %s", resp.Status)
 	}
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDenylist+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxDenylist {
+		return nil, fmt.Errorf("denylist is over %d MB", maxDenylist>>20)
+	}
+	if err := c.verify(resp.Header, sig, body, time.Now()); err != nil {
+		return nil, err
+	}
+
 	var dl Denylist
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&dl); err != nil {
+	if err := json.Unmarshal(body, &dl); err != nil {
 		return nil, fmt.Errorf("decode denylist: %w", err)
 	}
 	return &dl, nil

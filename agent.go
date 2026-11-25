@@ -29,7 +29,9 @@ func newAgent(cfg *Config, fw Firewall, st *state) *Agent {
 			url:    cfg.Central.URL,
 			source: cfg.Source,
 			secret: cfg.secret,
-			client: newCentralClient(time.Duration(cfg.Central.Timeout)),
+
+			requireSigned: cfg.Central.RequireSigned,
+			client:        newCentralClient(time.Duration(cfg.Central.Timeout)),
 		}
 	}
 	return a

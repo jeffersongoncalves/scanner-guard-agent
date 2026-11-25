@@ -127,8 +127,18 @@ ScannerGuardBan::query()->where('source', 'vps-01')->where('reason', 'ssh_brutef
 Every `pull_interval` the agent GETs the central denylist (active bans plus `ip_blocklist`) and
 syncs it into nftables. It adds new entries and lifts the ones the central app no longer lists,
 except bans this agent made itself. `central.url` must be `https` (plain `http` only for localhost):
-the pulled list holds raw IPs and isn't signed. The agent refuses to start otherwise, and never
-follows a redirect to `http`.
+the pulled list holds raw IPs. The agent refuses to start otherwise, and never follows a redirect to
+`http`.
+
+The central app signs the response with the source's secret, bound to the request it answers. A wrong
+signature, or a timestamp more than 5 minutes from this server's clock, fails the pull and keeps the
+last list. An unsigned response (older `laravel-scanner-guard`) is accepted by default. Once the central
+app signs, refuse it, or whoever terminates TLS could strip the signature:
+
+```yaml
+central:
+  require_signed_response: true
+```
 
 After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
 `version`, `rules`, `active_bans`, `started_at`). On the central app, run the
