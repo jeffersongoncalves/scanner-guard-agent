@@ -175,6 +175,36 @@ func TestNginxTestReport(t *testing.T) {
 	}
 }
 
+func TestLogClient(t *testing.T) {
+	for line, want := range map[string]string{
+		`198.51.100.1 - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                      "198.51.100.1",
+		`tools.example.com 198.51.100.2 - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:    "198.51.100.2",
+		`tools.example.com 2001:db8::7 - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:     "2001:db8::7",
+		`198.51.100.3 - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 403 rule=sqli-union host=a "x"`:       "198.51.100.3",
+		`unix: - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                             "unix:",
+		`unix: - 203.0.113.9 [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                   "unix:", // an IP-like user name
+		`198.51.100.5 - alice [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                  "198.51.100.5",
+		`192.168.1.1 198.51.100.6 - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:          "198.51.100.6", // an IP as server name
+		`site.example unix: - - [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "-" "x"`:                "unix:",
+		`site.example 198.51.100.4 - 203.0.113.9 [25/Nov/2026:10:00:00 -0300] "GET / HTTP/1.1" 200 1 "" ""`: "198.51.100.4", // $remote_user comes after
+		``: "",
+	} {
+		if got := logClient(line); got != want {
+			t.Errorf("%q: %q, want %q", line, got, want)
+		}
+	}
+
+	in := strings.Join([]string{
+		`a.example 198.51.100.1 - - [25/Nov/2026:10:00:00 -0300] "GET /.env HTTP/1.1" 404 1 "-" "x" rt=0.001`,
+		`b.example 198.51.100.1 - - [25/Nov/2026:10:00:00 -0300] "GET /.env HTTP/1.1" 404 1 "-" "x" rt=0.001`,
+		`b.example 198.51.100.2 - - [25/Nov/2026:10:00:00 -0300] "GET /.git/config HTTP/1.1" 404 1 "-" "x" rt=0.001`,
+	}, "\n")
+	var out bytes.Buffer
+	if err := nginxTest(shippedMaps(t), strings.NewReader(in), &out); err != nil || !strings.Contains(out.String(), "rule dotfile: 3 requests, 2 clients") {
+		t.Errorf("err %v, report:\n%s", err, out.String())
+	}
+}
+
 func TestNginxInit(t *testing.T) {
 	dir := t.TempDir()
 	if err := nginxInit(dir, nil, &bytes.Buffer{}); err == nil {

@@ -374,8 +374,7 @@ func nginxTest(maps map[string]nginxMap, in io.Reader, out io.Writer) error {
 			stats[rule] = st
 		}
 		st.total++
-		ip, _, _ := strings.Cut(sc.Text(), " ")
-		st.ips[ip] = true
+		st.ips[logClient(sc.Text())] = true
 		st.uris[m[1]]++
 	}
 	if err := sc.Err(); err != nil {
@@ -412,6 +411,23 @@ func nginxTest(maps map[string]nginxMap, in io.Reader, out io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// logClient returns the client of a log line, told apart by the layout rather
+// than by what looks like an IP (a server name or a user name can): combined is
+// "$remote_addr - $remote_user [", with the site in front the "-" moves one
+// field to the right ("$server_name $remote_addr - $remote_user [").
+func logClient(line string) string {
+	head, _, _ := strings.Cut(line, " [")
+	fields := strings.Fields(head)
+	switch {
+	case len(fields) == 0:
+		return ""
+	case len(fields) >= 3 && fields[1] != "-" && fields[2] == "-":
+		return fields[1]
+	default:
+		return fields[0]
+	}
 }
 
 // printable keeps control characters from a log off the terminal.
