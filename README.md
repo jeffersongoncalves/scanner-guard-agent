@@ -24,6 +24,7 @@ sshd / nginx / postfix logs ──► agent ──► nftables (local drop)
 - Uses its own nftables table (`inet scanner_guard`) and never touches your other rules. It coexists with fail2ban.
 - Drops in `prerouting`, before Docker's DNAT, so a ban also covers published container ports.
 - Optional nginx and Apache denylist files, for servers behind a proxy or CDN.
+- `nginx-init` command sets up nginx to block common attacks itself: SQL injection, file inclusion, XSS, exposed files, login brute force.
 - `test` command replays a log through the rules before anything gets banned.
 
 ## Install
@@ -203,6 +204,94 @@ sudo systemctl reload nginx
   recreate the file otherwise), delete the file, reload the web server.
 - The systemd sandbox only allows `/var/lib/scanner-guard`. Any other path needs a `ReadWritePaths=`
   drop-in, and your own reload unit.
+
+## Block attacks in nginx
+
+The agent reads logs, so it only acts after a request was served. nginx can refuse the request itself:
+
+```bash
+sudo scanner-guard-agent nginx-init                                # -dir for another /etc/nginx
+sudo scanner-guard-agent nginx-test /var/log/nginx/access.log      # what the rules would have blocked
+```
+
+Behind a proxy or CDN, also pass `-proxy`, with `cloudflare`, IPs or CIDRs (the whole chain, e.g.
+`-proxy cloudflare,172.18.0.0/16`). It restores the client IP in nginx and prints the `ignore` line for
+`agent.yaml`. Skip it if your config already has a `real_ip_header`: nginx accepts only one.
+
+`nginx-init` never overwrites a file, so they are yours to adjust:
+
+| File in `/etc/nginx` | What it holds |
+|------|---------------|
+| `conf.d/scanner-guard-rules.conf` | exceptions (paths) and rules, one per line |
+| `conf.d/scanner-guard-realip.conf` | client IP behind a proxy (only with `-proxy`) |
+| `scanner-guard/server.conf` | the 403 and its log |
+| `scanner-guard/login.conf` | login rate limit (optional) |
+
+| Rules | Catch |
+|-------|-------|
+| `sqli-*` | SQL injection: `UNION SELECT`, `' or 1=1`, `sleep(5)`, `information_schema` |
+| `traversal`, `lfi`, `nullbyte`, `wrapper` | `../../`, `/etc/passwd`, `%00`, `php://filter` |
+| `command`, `code`, `phpini`, `object`, `globals`, `jndi` | `;wget http`, `system(`, `-d allow_url_include`, serialized objects |
+| `xss` | `<script>`, `onerror=`, `javascript:` |
+| `dotfile`, `backup`, `config`, `probe` | `.env`, `.git`, `dump.sql`, `config.php.bak`, `composer.lock`, web shells |
+| `upload-php` | PHP inside `uploads`, `tmp`, `temp` or `cache` |
+| `scanner`, `shellshock` | User-Agents: sqlmap, nikto, nuclei, ... |
+| `encoded`, `rfi`, `cms`, `empty-agent` | stricter, commented out |
+
+Run `nginx-test` on a few days of logs. On a false positive, add the path to the exceptions or comment
+the rule out, and test again. Then add to each `server` block to protect, before its own
+`if`/`rewrite`/`return`:
+
+```nginx
+include scanner-guard/server.conf;
+include scanner-guard/login.conf;   # optional
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Blocked requests get a `403` and go to `/var/log/nginx/scanner-guard.log` with the name of the rule,
+instead of the site's access log. Login POSTs above the rate get a `429`, on the paths listed in
+`scanner-guard-rules.conf` (a route in the query string, as in `index.php?r=login`, isn't seen). A
+`location` with its own `limit_req` doesn't inherit the login limit, repeat the `include`'s `limit_req`
+line there.
+
+To also ban who insists, add to `agent.yaml` and restart the agent
+(`sudo systemctl restart scanner-guard-agent`):
+
+```yaml
+  - name: web_attack
+    file: /var/log/nginx/scanner-guard.log
+    patterns: ['^<ip> - \[']
+    threshold: 3
+    window: 10m
+    ban: [1d, 7d, 30d]
+  - name: web_login
+    file: /var/log/nginx/access.log          # the site's own log
+    patterns: ['^<ip> - \S+ \[[^\]]+\] "POST [^"]*" 429 ']
+    threshold: 20
+    window: 10m
+    ban: [1h, 1d, 7d]
+```
+
+> **Warning:** behind a proxy or CDN, run `nginx-init -proxy` and put the proxies in `ignore` before
+> enabling these rules or `login.conf`. Otherwise the log holds the proxy's IP, the agent bans the
+> proxy, and every visitor shares one login limit.
+
+This is a filter for common probes, not a WAF, and it doesn't fix a vulnerable application:
+
+- Only the path, query string and User-Agent are checked: not the POST body, cookies or other headers.
+- Percent-encoded letters (`%55NION`), comments with text (`union/*x*/select`) and more than 40
+  separators in a row get through. The `encoded` rule covers the first.
+- Use bound parameters in the application. For the rest, ModSecurity or Coraza with the OWASP CRS.
+- The logrotate rule of the nginx package covers the log, as long as it rotates `/var/log/nginx/*.log`.
+- To get the rules of a newer version, move `conf.d/scanner-guard-rules.conf` away, run `nginx-init` and bring
+  your changes over.
+- To undo: remove the `include` lines, delete the files, reload nginx. Remove the agent rules and restart
+  the agent.
+- `nginx-test` reads the request line and User-Agent of the combined format. It fails on rules it can't
+  run (`include`, lookaheads) instead of skipping them, and doesn't cover the login limit.
 
 ## Manage bans
 

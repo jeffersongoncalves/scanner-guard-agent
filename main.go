@@ -35,6 +35,10 @@ func main() {
 		runCmd(os.Args[2:])
 	case "test":
 		testCmd(os.Args[2:])
+	case "nginx-init":
+		nginxInitCmd(os.Args[2:])
+	case "nginx-test":
+		nginxTestCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	default:
@@ -49,8 +53,10 @@ func usage() {
 Usage:
   scanner-guard-agent run  [-config %s]
   scanner-guard-agent test [-config %s] [-rule NAME] [-ban] LOGFILE|-
+  scanner-guard-agent nginx-init [-dir %s] [-proxy cloudflare,CIDR,...]
+  scanner-guard-agent nginx-test [-dir %s] ACCESSLOG|-
   scanner-guard-agent version
-`, version, defaultConfig, defaultConfig)
+`, version, defaultConfig, defaultConfig, defaultNginxDir, defaultNginxDir)
 }
 
 func runCmd(args []string) {

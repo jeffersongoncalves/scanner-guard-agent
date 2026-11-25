@@ -170,6 +170,15 @@ func (c *Config) ignored(p netip.Prefix) bool {
 	return false
 }
 
+// tooBroad refuses ranges that would cover a large part of the internet where a
+// list is trusted to exempt or to vouch for clients.
+func tooBroad(p netip.Prefix) bool {
+	if p.Addr().Is4() {
+		return p.Bits() < 8
+	}
+	return p.Bits() < 16
+}
+
 // parseTarget parses an IP or CIDR into a prefix (a single IP is a /32 or /128).
 // Everything handed to the firewall goes through here, pulled entries included.
 func parseTarget(s string) (netip.Prefix, error) {

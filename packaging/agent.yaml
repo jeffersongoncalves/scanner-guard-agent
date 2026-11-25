@@ -56,6 +56,23 @@ rules:
   #   window: 5m
   #   ban: [1d, 7d]
 
+  # Requests blocked by nginx (scanner-guard-agent nginx-init). Behind a proxy or
+  # CDN, run it with -proxy and fill ignore first, or these rules ban the proxy.
+  # - name: web_attack
+  #   file: /var/log/nginx/scanner-guard.log
+  #   patterns:
+  #     - '^<ip> - \['
+  #   threshold: 3
+  #   window: 10m
+  #   ban: [1d, 7d, 30d]
+  # - name: web_login
+  #   file: /var/log/nginx/access.log
+  #   patterns:
+  #     - '^<ip> - \S+ \[[^\]]+\] "POST [^"]*" 429 '
+  #   threshold: 20
+  #   window: 10m
+  #   ban: [1h, 1d, 7d]
+
   # - name: postfix_sasl
   #   journald: [postfix.service, postfix@-.service]
   #   patterns:
