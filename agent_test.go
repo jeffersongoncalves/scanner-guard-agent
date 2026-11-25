@@ -411,3 +411,92 @@ func TestCentralRefusesInsecureRedirect(t *testing.T) {
 		t.Error("a redirect loop must still stop")
 	}
 }
+
+func TestCentralIgnore(t *testing.T) {
+	now := time.Now()
+	path := filepath.Join(t.TempDir(), "state.json")
+	mine, other := netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("203.0.113.99")
+	body := `{"bans":[{"ip":"203.0.113.11","expires_at":"2099-01-01T00:00:00Z"}],"ip_blocklist":["198.51.100.0/24"],
+		"ignore":["203.0.113.0/28","198.51.100.7","0.0.0.0/0","::/0","nope","203.0.113.0/28"]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
+	defer srv.Close()
+
+	fw := fakeFirewall{}
+	cfg := &Config{StateFile: path, EscalationLookback: Duration(time.Hour), rules: []*Rule{sshRule(t)}}
+	a := newAgent(cfg, fw, newState())
+	a.central = &Central{url: srv.URL, client: srv.Client()}
+	for _, ip := range []netip.Addr{mine, other} {
+		a.state.Banned[ip] = now.Add(time.Hour)
+		fw[hostPrefix(ip)] = time.Hour
+	}
+
+	// A ban from before the list is lifted, the others stay.
+	dl := a.pull(context.Background())
+	if _, ok := fw[hostPrefix(mine)]; ok {
+		t.Error("an ignored IP stayed banned")
+	}
+	if _, ok := fw[hostPrefix(other)]; !ok {
+		t.Error("a ban outside the list was lifted (is 0.0.0.0/0 refused?)")
+	}
+	if n := len(a.state.Ignore); n != 2 {
+		t.Errorf("ignore = %v, want the 2 valid entries", a.state.Ignore)
+	}
+
+	// Neither the denylist nor a rule bans it again.
+	if want := a.apply(dl, map[netip.Prefix]time.Time{}, now); len(want) != 0 {
+		t.Errorf("applied %v, both overlap the list", want)
+	}
+	if _, ok := a.decide(cfg.rules[0], mine, "p", 5, now); ok {
+		t.Error("banned an ignored IP")
+	}
+
+	// A restart honors it before the central app answers.
+	st, err := loadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := newAgent(cfg, fw, st); !b.ignored(hostPrefix(mine)) || b.ignored(hostPrefix(other)) {
+		t.Errorf("after a restart ignore = %v", st.Ignore)
+	}
+
+	// No key: an older central app, keep the list. An empty list clears it.
+	body = `{"bans":[]}`
+	a.pull(context.Background())
+	if !a.ignored(hostPrefix(mine)) {
+		t.Error("a response without ignore cleared the list")
+	}
+	body = `{"bans":[],"ignore":[]}`
+	a.pull(context.Background())
+	if a.ignored(hostPrefix(mine)) {
+		t.Error("an empty list must clear it")
+	}
+}
+
+// The config's ignore is not the central app's to remove.
+func TestCentralIgnoreKeepsConfig(t *testing.T) {
+	a := newAgent(&Config{ignore: []netip.Prefix{mustTarget("10.0.0.0/8")}}, fakeFirewall{}, newState())
+	a.setIgnore([]string{})
+	if !a.ignored(mustTarget("10.1.2.3")) {
+		t.Error("config ignore lost")
+	}
+}
+
+// On a fresh install the list must be in place before the first line is read.
+func TestRunPullsIgnoreFirst(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a := newAgent(&Config{Central: CentralConfig{PullInterval: Duration(time.Hour)}}, fakeFirewall{}, newState())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost { // the heartbeat comes after the first apply
+			cancel()
+			return
+		}
+		_, _ = io.WriteString(w, `{"bans":[{"ip":"203.0.113.11","expires_at":"2099-01-01T00:00:00Z"}],"ignore":["203.0.113.10"]}`)
+	}))
+	defer srv.Close()
+	a.central = &Central{url: srv.URL, client: srv.Client()}
+	a.run(ctx)
+	if !a.ignored(mustTarget("203.0.113.10")) || len(a.pulled) != 1 {
+		t.Errorf("ignore = %v, pulled = %v", a.state.Ignore, a.pulled)
+	}
+}

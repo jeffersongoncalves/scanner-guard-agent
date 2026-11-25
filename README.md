@@ -130,6 +130,16 @@ except bans this agent made itself. `central.url` must be `https` (plain `http` 
 the pulled list holds raw IPs and isn't signed. The agent refuses to start otherwise, and never
 follows a redirect to `http`.
 
+The response may also carry `ignore`, a list of IPs and CIDRs no server should ban, added to the
+`ignore` of `agent.yaml` (which always applies). The agent pulls it before it starts watching the logs,
+so a new server has it before its first ban. It lifts local bans the list covers, and keeps the list in
+the state file for when the central app is down. An empty list clears it, a response without the key
+leaves it as is. Ranges wider than /8 (IPv4) or /16 (IPv6) are refused. It needs a central app that
+sends it (`ip_ignore` in `laravel-scanner-guard`).
+
+> **Warning:** whoever can change the response can add entries to `ignore`. See
+> [#8](https://github.com/jeffersongoncalves/scanner-guard-agent/issues/8), signing the response.
+
 After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
 `version`, `rules`, `active_bans`, `started_at`). On the central app, run the
 `create_scanner_guard_agents_table` migration, then spot dead servers with
