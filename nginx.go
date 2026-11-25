@@ -374,8 +374,7 @@ func nginxTest(maps map[string]nginxMap, in io.Reader, out io.Writer) error {
 			stats[rule] = st
 		}
 		st.total++
-		ip, _, _ := strings.Cut(sc.Text(), " ")
-		st.ips[ip] = true
+		st.ips[logClient(sc.Text())] = true
 		st.uris[m[1]]++
 	}
 	if err := sc.Err(); err != nil {
@@ -412,6 +411,23 @@ func nginxTest(maps map[string]nginxMap, in io.Reader, out io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// logClient returns the client of a log line: the first IP before the date, so
+// a format that starts with the site ("$server_name $remote_addr - ...") counts
+// clients, not sites. Without an IP there, the first field.
+func logClient(line string) string {
+	head, _, _ := strings.Cut(line, " [")
+	fields := strings.Fields(head)
+	for _, f := range fields {
+		if _, err := netip.ParseAddr(f); err == nil {
+			return f
+		}
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 // printable keeps control characters from a log off the terminal.
