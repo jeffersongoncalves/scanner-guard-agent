@@ -2,6 +2,13 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 1.0.1 - 2026-11-22
+
+### Changelog
+
+* 2e3166aee6a36d6f87173e721a9321b266627275: Merge pull request #3 from jeffersongoncalves/fix/docker-prerouting (@jeffersongoncalves)
+* 2a66d7e8a37028c3dad03a7748c782cd40dc2102: fix: drop banned IPs in prerouting to cover Docker ports (@jeffersongoncalves)
+
 ## 1.0.0 - 2026-11-22
 
 ### Changelog
