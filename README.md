@@ -154,6 +154,22 @@ sends it (`ip_ignore` in `laravel-scanner-guard`).
 > **Warning:** whoever can change the response can add entries to `ignore`. See
 > [#8](https://github.com/jeffersongoncalves/scanner-guard-agent/issues/8), signing the response.
 
+It may also carry `agent_rules`: a `threshold`, `window` and `ban` steps (in seconds) per rule
+name, set once on the central app for every server (`ScannerGuardAgentRule` in
+`laravel-scanner-guard`, a page in `filament-scanner-guard`):
+
+```json
+"agent_rules": {"web_attack": {"threshold": 5, "window": 600, "ban": [86400, 604800, 2592000]}}
+```
+
+They replace those three values of the rule with that name, within a pull interval, and the agent
+logs each change (`rule web_attack: 5 in 10m, ban 1d/7d/30d (from the central app)`). The patterns
+and the log a rule reads always come from `agent.yaml`. A rule the central app leaves out, or sends
+invalid, uses `agent.yaml`'s values, so an empty object puts every rule back. A response without the
+key keeps the last settings, which the state file holds across restarts. An IP keeps its offense
+count when the steps change: its next ban takes the new step for that count. `status` marks the
+rules set by the central app, and `replay` counts with the same values as the running agent.
+
 After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
 `version`, `rules`, `active_bans`, `started_at`). `active_bans` counts everything the firewall
 blocks: this server's bans plus the pulled ones (before 2.3.0: only its own). On the central app, run the

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"log"
+	"maps"
 	"net/netip"
 	"slices"
 	"sync"
@@ -74,6 +75,7 @@ func (a *Agent) restore(now time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.state.prune(now, time.Duration(a.cfg.EscalationLookback))
+	applyRuleSettings(a.cfg.rules, a.state.Rules, log.Printf) // the last ones the central app sent
 	for ip, until := range a.state.Banned {
 		if a.ignoredLocked(hostPrefix(ip)) {
 			delete(a.state.Banned, ip)
@@ -145,13 +147,14 @@ func (a *Agent) decide(r *Rule, ip netip.Addr, pattern string, hits int, now tim
 	o.Last = now
 	offs[ip] = o
 
+	steps := r.limits().ban
 	b := Ban{
 		IP:       ip,
 		Reason:   r.Name,
 		Pattern:  pattern,
 		Hits:     hits,
 		Offense:  o.N,
-		Duration: r.ban[min(o.N, len(r.ban))-1], // the last step repeats
+		Duration: steps[min(o.N, len(steps))-1], // the last step repeats
 		At:       now,
 	}
 	a.state.Banned[ip] = now.Add(b.Duration)
@@ -203,7 +206,53 @@ func (a *Agent) pull(ctx context.Context) *Denylist {
 	if dl.Ignore != nil {
 		a.setIgnore(*dl.Ignore)
 	}
+	if dl.AgentRules != nil {
+		a.setRuleSettings(*dl.AgentRules)
+	}
 	return dl
+}
+
+// setRuleSettings puts the central app's rule settings in force, kept in the
+// state so a restart with the central app down still honors them.
+func (a *Agent) setRuleSettings(m map[string]RuleSettings) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if maps.EqualFunc(m, a.state.Rules, func(x, y RuleSettings) bool {
+		return x.Threshold == y.Threshold && x.Window == y.Window && slices.Equal(x.Ban, y.Ban)
+	}) {
+		return
+	}
+	a.state.Rules = m
+	applyRuleSettings(a.cfg.rules, m, log.Printf)
+	if a.statePath != "" {
+		if err := a.state.save(a.statePath); err != nil {
+			log.Printf("save state: %v", err)
+		}
+	}
+}
+
+// applyRuleSettings puts m in force on the rules of the same name, and
+// agent.yaml's limits back on the others, logging every change. Names this
+// agent has no rule for are skipped.
+func applyRuleSettings(rules []*Rule, m map[string]RuleSettings, logf func(string, ...any)) {
+	for _, r := range rules {
+		before := r.limits()
+		s, ok := m[r.Name]
+		switch {
+		case !ok:
+			r.setCentral(nil)
+		case !r.setCentral(&s):
+			logf("rule %s: invalid settings from the central app %+v, using agent.yaml's", r.Name, s)
+			continue
+		}
+		if after := r.limits(); after.String() != before.String() || after.central != before.central {
+			from := "agent.yaml"
+			if after.central {
+				from = "the central app"
+			}
+			logf("rule %s: %s (from %s)", r.Name, after, from)
+		}
+	}
 }
 
 // centralLoop applies the denylist and sends a heartbeat every pull_interval,
