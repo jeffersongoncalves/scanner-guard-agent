@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -61,16 +62,57 @@ func TestHitThresholdAndWindow(t *testing.T) {
 	ip := netip.MustParseAddr("203.0.113.7")
 	t0 := time.Unix(1_700_000_000, 0)
 
-	r.Hit(ip, t0)
-	r.Hit(ip, t0.Add(5*time.Minute))
-	if _, trip := r.Hit(ip, t0.Add(11*time.Minute)); trip {
+	r.Hit(ip, t0, "a")
+	r.Hit(ip, t0.Add(5*time.Minute), "b")
+	if _, _, trip := r.Hit(ip, t0.Add(11*time.Minute), "c"); trip {
 		t.Fatal("first hit fell out of the window, must not trip yet")
 	}
-	if hits, trip := r.Hit(ip, t0.Add(12*time.Minute)); !trip || hits != 3 {
+	hits, lines, trip := r.Hit(ip, t0.Add(12*time.Minute), "d")
+	if !trip || hits != 3 {
 		t.Fatalf("Hit = %d, %v; want 3, true", hits, trip)
 	}
-	if _, trip := r.Hit(ip, t0.Add(13*time.Minute)); trip {
+	if strings.Join(lines, ",") != "b,c,d" {
+		t.Errorf("evidence = %q, want the lines inside the window, oldest first", lines)
+	}
+	if _, _, trip := r.Hit(ip, t0.Add(13*time.Minute), "e"); trip {
 		t.Fatal("counter must restart after tripping")
+	}
+}
+
+func TestHitEvidenceIsCapped(t *testing.T) {
+	r := sshRule(t)
+	r.threshold = 30
+	ip := netip.MustParseAddr("203.0.113.7")
+	t0 := time.Unix(1_700_000_000, 0)
+
+	long := strings.Repeat("x", 2*maxEvidenceLine)
+	var lines []string
+	for i := range 30 {
+		_, lines, _ = r.Hit(ip, t0.Add(time.Duration(i)*time.Second), fmt.Sprintf("%02d%s", i, long))
+	}
+	if len(lines) != maxEvidence || !strings.HasPrefix(lines[0], "10") || !strings.HasPrefix(lines[maxEvidence-1], "29") {
+		t.Fatalf("evidence: %d lines, first %.2q; want the last %d", len(lines), lines[0], maxEvidence)
+	}
+	if len(lines[0]) != maxEvidenceLine {
+		t.Errorf("line length %d, want %d", len(lines[0]), maxEvidenceLine)
+	}
+}
+
+func TestRedact(t *testing.T) {
+	v4 := netip.MustParseAddr("203.0.113.7")
+	got := redact([]string{`203.0.113.7 - [x] "GET /.env HTTP/2.0" 403 rule=dotfile`, "Invalid user hari from 203.0.113.7 port 1"}, v4)
+	if got[0] != `<ip> - [x] "GET /.env HTTP/2.0" 403 rule=dotfile` || got[1] != "Invalid user hari from <ip> port 1" {
+		t.Errorf("v4: %q", got)
+	}
+	v6 := netip.MustParseAddr("2001:db8::7")
+	got = redact([]string{"from 2001:db8::7 port 1", "from 2001:DB8::7", "from 2001:0db8:0000:0000:0000:0000:0000:0007"}, v6)
+	for _, l := range got {
+		if strings.Contains(strings.ToLower(l), "2001") {
+			t.Errorf("v6 left in %q", l)
+		}
+	}
+	if got := redact(nil, v4); got == nil || len(got) != 0 {
+		t.Errorf("redact(nil) = %#v, want an empty list (JSON [])", got)
 	}
 }
 
@@ -186,12 +228,16 @@ func TestReportPullAndHeartbeat(t *testing.T) {
 
 	c := &Central{url: srv.URL + "/bans", source: "vps-01", secret: "s3cret", client: srv.Client()}
 	at := time.Unix(1_700_000_000, 0).UTC()
-	err := c.Report(context.Background(), Ban{IP: netip.MustParseAddr("203.0.113.7"), Reason: "ssh_bruteforce", Pattern: "Invalid user <ip>", Hits: 5, Offense: 2, Duration: time.Hour, At: at})
+	err := c.Report(context.Background(), Ban{IP: netip.MustParseAddr("203.0.113.7"), Reason: "ssh_bruteforce", Pattern: "Invalid user <ip>", Hits: 5, Offense: 2, Duration: time.Hour, At: at,
+		Evidence: []string{"Invalid user marko from 203.0.113.7 port 43324", "Invalid user hari from 203.0.113.7 port 44372"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if posted["ip"] != "203.0.113.7" || posted["source"] != "vps-01" || posted["expires_at"] != "2023-11-14T23:13:20Z" || posted["matched_value"] != "Invalid user <ip>" {
 		t.Errorf("posted = %v", posted)
+	}
+	if ev := fmt.Sprint(posted["evidence"]); ev != "[Invalid user marko from <ip> port 43324 Invalid user hari from <ip> port 44372]" {
+		t.Errorf("evidence = %s", ev)
 	}
 
 	dl, err := c.Pull(context.Background())

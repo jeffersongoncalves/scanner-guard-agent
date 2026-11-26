@@ -117,8 +117,9 @@ sudo chmod 600 /etc/scanner-guard/secret
 ```
 
 Each ban is POSTed with `reason` = rule name, `source` = `source`, `matched_value` = the pattern
-that matched (never the log line, which holds the raw IP), `hit_count`, `offense`, `banned_at` and
-`expires_at`, signed as `X-Signature: hmac_sha256(X-Timestamp . body, secret)`. It then shows up in
+that matched, `hit_count`, `offense`, `banned_at`, `expires_at` and `evidence` = the last log lines
+that tripped the rule (up to 20, 512 bytes each, the banned IP replaced by `<ip>`; a central app that
+doesn't know the field ignores it), signed as `X-Signature: hmac_sha256(X-Timestamp . body, secret)`. It then shows up in
 the central ban table, the daily stats and the central denylist sinks (Cloudflare, nginx, ...):
 
 ```php

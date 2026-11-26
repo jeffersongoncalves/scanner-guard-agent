@@ -24,8 +24,22 @@ type Rule struct {
 	window    time.Duration
 	ban       []time.Duration
 
-	hits map[netip.Addr][]time.Time
+	hits map[netip.Addr][]hit
 }
+
+// hit is one matching line, kept until the threshold trips so the ban can show
+// what led to it.
+type hit struct {
+	at   time.Time
+	line string
+}
+
+// Evidence limits: at most threshold-1 lines wait per IP, and a ban sends the
+// last maxEvidence of them, each cut to maxEvidenceLine bytes.
+const (
+	maxEvidence     = 20
+	maxEvidenceLine = 512
+)
 
 type Ban struct {
 	IP       netip.Addr
@@ -35,6 +49,7 @@ type Ban struct {
 	Offense  int
 	Duration time.Duration
 	At       time.Time
+	Evidence []string // the lines that tripped the rule, oldest first
 }
 
 func newRule(rc RuleConfig) (*Rule, error) {
@@ -60,7 +75,7 @@ func newRule(rc RuleConfig) (*Rule, error) {
 		raw:       rc.Patterns,
 		threshold: rc.Threshold,
 		window:    time.Duration(rc.Window),
-		hits:      map[netip.Addr][]time.Time{},
+		hits:      map[netip.Addr][]hit{},
 	}
 	for _, d := range rc.Ban {
 		if d <= 0 {
@@ -97,25 +112,30 @@ func (r *Rule) Match(line string) (netip.Addr, string, bool) {
 	return netip.Addr{}, "", false
 }
 
-// Hit records one match; once the threshold is reached it returns the number
-// of hits inside the window and true, and starts counting from zero again.
-func (r *Rule) Hit(ip netip.Addr, now time.Time) (int, bool) {
+// Hit records one matching line; once the threshold is reached it returns the
+// number of hits inside the window, the last lines (evidence) and true, and
+// starts counting from zero again.
+func (r *Rule) Hit(ip netip.Addr, now time.Time, line string) (int, []string, bool) {
 	cutoff := now.Add(-r.window)
 	hits := r.hits[ip][:0]
-	for _, t := range r.hits[ip] {
-		if t.After(cutoff) {
-			hits = append(hits, t)
+	for _, h := range r.hits[ip] {
+		if h.at.After(cutoff) {
+			hits = append(hits, h)
 		}
 	}
-	hits = append(hits, now)
+	hits = append(hits, hit{now, truncate(line, maxEvidenceLine)})
 
 	if len(hits) < r.threshold {
 		r.hits[ip] = hits
-		return 0, false
+		return 0, nil, false
 	}
 
 	delete(r.hits, ip)
-	return len(hits), true
+	lines := make([]string, 0, min(len(hits), maxEvidence))
+	for _, h := range hits[max(0, len(hits)-maxEvidence):] {
+		lines = append(lines, h.line)
+	}
+	return len(hits), lines, true
 }
 
 // Prune drops counters with no hit inside the window, so IPs that never
@@ -123,7 +143,7 @@ func (r *Rule) Hit(ip netip.Addr, now time.Time) (int, bool) {
 func (r *Rule) Prune(now time.Time) {
 	cutoff := now.Add(-r.window)
 	for ip, hits := range r.hits {
-		if !hits[len(hits)-1].After(cutoff) {
+		if !hits[len(hits)-1].at.After(cutoff) {
 			delete(r.hits, ip)
 		}
 	}
