@@ -81,7 +81,7 @@ func TestHitThresholdAndWindow(t *testing.T) {
 
 func TestHitEvidenceIsCapped(t *testing.T) {
 	r := sshRule(t)
-	r.threshold = 30
+	r.local.threshold = 30
 	ip := netip.MustParseAddr("203.0.113.7")
 	t0 := time.Unix(1_700_000_000, 0)
 
@@ -524,6 +524,66 @@ func TestCentralIgnoreKeepsConfig(t *testing.T) {
 	a.setIgnore([]string{})
 	if !a.ignored(mustTarget("10.1.2.3")) {
 		t.Error("config ignore lost")
+	}
+}
+
+func TestCentralRuleSettings(t *testing.T) {
+	now := time.Now()
+	path := filepath.Join(t.TempDir(), "state.json")
+	body := `{"bans":[],"agent_rules":{"ssh_bruteforce":{"threshold":2,"window":60,"ban":[86400,604800]},"other":{"threshold":1,"window":1,"ban":[1]}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
+	defer srv.Close()
+
+	r := sshRule(t)
+	cfg := &Config{StateFile: path, EscalationLookback: Duration(time.Hour), rules: []*Rule{r}}
+	a := newAgent(cfg, fakeFirewall{}, newState())
+	a.central = &Central{url: srv.URL, client: srv.Client()}
+	ip := netip.MustParseAddr("203.0.113.7")
+
+	a.pull(context.Background())
+	if got := r.limits().String(); got != "2 in 1m, ban 1d/7d" || !r.limits().central {
+		t.Fatalf("limits = %s, want the central app's", got)
+	}
+	if _, _, trip := r.Hit(ip, now, "a"); trip {
+		t.Fatal("tripped on the first hit")
+	}
+	if _, _, trip := r.Hit(ip, now.Add(30*time.Second), "b"); !trip {
+		t.Fatal("the central threshold of 2 did not trip")
+	}
+	if b, ok := a.decide(r, ip, "p", 2, now); !ok || b.Duration != 24*time.Hour {
+		t.Errorf("ban = %v, want the central app's first step", b.Duration)
+	}
+
+	// A restart with the central app down keeps them.
+	st, err := loadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2 := sshRule(t)
+	newAgent(&Config{rules: []*Rule{r2}}, fakeFirewall{}, st).restore(now)
+	if !r2.limits().central {
+		t.Error("lost the central settings on restart")
+	}
+
+	// No key keeps them, invalid or an empty object puts agent.yaml's back.
+	for _, c := range []struct {
+		body    string
+		central bool
+	}{
+		{`{"bans":[]}`, true},
+		{`{"bans":[],"agent_rules":{"ssh_bruteforce":{"threshold":0,"window":60,"ban":[60]}}}`, false},
+		{`{"bans":[],"agent_rules":{"ssh_bruteforce":{"threshold":2,"window":60,"ban":[]}}}`, false},
+		{`{"bans":[],"agent_rules":{"ssh_bruteforce":{"threshold":4,"window":60,"ban":[60]}}}`, true},
+		{`{"bans":[],"agent_rules":{}}`, false},
+	} {
+		body = c.body
+		a.pull(context.Background())
+		if r.limits().central != c.central {
+			t.Errorf("%s: central = %v", c.body, r.limits().central)
+		}
+	}
+	if got := r.limits().String(); got != "3 in 10m, ban 1h/1d" {
+		t.Errorf("limits = %s, want agent.yaml's", got)
 	}
 }
 

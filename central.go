@@ -67,6 +67,9 @@ type Denylist struct {
 	// nil: a central app without the feature, or an error body. An empty list
 	// is a list.
 	Ignore *[]string `json:"ignore"`
+	// Threshold, window and ban steps per rule name. nil: a central app without
+	// the feature (keep the last ones); empty: agent.yaml's for every rule.
+	AgentRules *map[string]RuleSettings `json:"agent_rules"`
 }
 
 // sign matches ScannerGuard::sign(): hash_hmac('sha256', timestamp.body, secret).

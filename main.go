@@ -242,7 +242,7 @@ func judge(w io.Writer, rules []*Rule, tallies map[*Rule]*tally, isIgnored func(
 			case isIgnored(hostPrefix(ip)):
 				mark = "  (ignored)"
 				ignored++
-			case n < r.threshold:
+			case n < r.limits().threshold:
 			case a == nil:
 				mark = "  <- would ban"
 				bans++

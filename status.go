@@ -75,16 +75,17 @@ func writeStatus(w io.Writer, cfg *Config, st *state, service string, sets map[s
 	fmt.Fprintf(w, "  ignore:    %d in agent.yaml, %d from the central app\n", len(cfg.ignore)-len(alwaysIgnore), len(st.Ignore))
 
 	fmt.Fprintln(w, "\nrules:")
+	applyRuleSettings(cfg.rules, st.Rules, func(string, ...any) {}) // what the running agent uses
 	for _, r := range cfg.rules {
 		src := r.file
 		if src == "" {
 			src = "journald " + strings.Join(r.journald, ",")
 		}
-		steps := make([]string, len(r.ban))
-		for i, d := range r.ban {
-			steps[i] = shortDur(d)
+		l, from := r.limits(), ""
+		if l.central {
+			from = " (central app)"
 		}
-		fmt.Fprintf(w, "  %-16s %d in %s, ban %s  <- %s\n", r.Name, r.threshold, shortDur(r.window), strings.Join(steps, "/"), src)
+		fmt.Fprintf(w, "  %-16s %s%s  <- %s\n", r.Name, l, from, src)
 	}
 
 	type local struct {

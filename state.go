@@ -16,6 +16,7 @@ type state struct {
 	Offenses map[string]map[netip.Addr]offense `json:"offenses"`         // rule -> IP
 	Banned   map[netip.Addr]time.Time          `json:"banned"`           // IP -> expiry
 	Ignore   []netip.Prefix                    `json:"ignore,omitempty"` // the central app's, on top of the config's
+	Rules    map[string]RuleSettings           `json:"rules,omitempty"`  // the central app's agent_rules
 }
 
 type offense struct {

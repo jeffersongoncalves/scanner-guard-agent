@@ -2,9 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,16 +18,59 @@ const ipGroup = `(?P<ip>[0-9A-Fa-f:.]{3,45})`
 // inside window. Owned by a single goroutine: no locking. Escalation (which
 // step of ban applies) lives in the agent's persisted state.
 type Rule struct {
-	Name      string
-	file      string
-	journald  []string
-	patterns  []*regexp.Regexp
-	raw       []string
+	Name     string
+	file     string
+	journald []string
+	patterns []*regexp.Regexp
+	raw      []string
+	local    limits                 // agent.yaml's
+	cur      atomic.Pointer[limits] // in force: local, or the central app's (swapped by a pull)
+
+	hits map[netip.Addr][]hit
+}
+
+// limits are the knobs of a rule the central app may set (agent_rules).
+type limits struct {
 	threshold int
 	window    time.Duration
 	ban       []time.Duration
+	central   bool // set by the central app, not agent.yaml
+}
 
-	hits map[netip.Addr][]hit
+func (r *Rule) limits() *limits { return r.cur.Load() }
+
+// RuleSettings is one entry of the central app's agent_rules, in seconds.
+type RuleSettings struct {
+	Threshold int     `json:"threshold"`
+	Window    int64   `json:"window"`
+	Ban       []int64 `json:"ban"`
+}
+
+// setCentral puts s in force, or agent.yaml's limits back when s is nil.
+// false: s is invalid, agent.yaml's apply.
+func (r *Rule) setCentral(s *RuleSettings) bool {
+	if s == nil {
+		r.cur.Store(&r.local)
+		return true
+	}
+	l := &limits{threshold: s.Threshold, window: time.Duration(s.Window) * time.Second, central: true}
+	for _, d := range s.Ban {
+		l.ban = append(l.ban, time.Duration(d)*time.Second)
+	}
+	if l.threshold < 1 || l.window <= 0 || len(l.ban) == 0 || slices.ContainsFunc(l.ban, func(d time.Duration) bool { return d <= 0 }) {
+		r.cur.Store(&r.local)
+		return false
+	}
+	r.cur.Store(l)
+	return true
+}
+
+func (l *limits) String() string {
+	steps := make([]string, len(l.ban))
+	for i, d := range l.ban {
+		steps[i] = shortDur(d)
+	}
+	return fmt.Sprintf("%d in %s, ban %s", l.threshold, shortDur(l.window), strings.Join(steps, "/"))
 }
 
 // hit is one matching line, kept until the threshold trips so the ban can show
@@ -69,20 +115,20 @@ func newRule(rc RuleConfig) (*Rule, error) {
 	}
 
 	r := &Rule{
-		Name:      rc.Name,
-		file:      rc.File,
-		journald:  rc.Journald,
-		raw:       rc.Patterns,
-		threshold: rc.Threshold,
-		window:    time.Duration(rc.Window),
-		hits:      map[netip.Addr][]hit{},
+		Name:     rc.Name,
+		file:     rc.File,
+		journald: rc.Journald,
+		raw:      rc.Patterns,
+		local:    limits{threshold: rc.Threshold, window: time.Duration(rc.Window)},
+		hits:     map[netip.Addr][]hit{},
 	}
 	for _, d := range rc.Ban {
 		if d <= 0 {
 			return nil, errors.New("ban durations must be positive")
 		}
-		r.ban = append(r.ban, time.Duration(d))
+		r.local.ban = append(r.local.ban, time.Duration(d))
 	}
+	r.cur.Store(&r.local)
 	for _, p := range rc.Patterns {
 		if strings.Count(p, "<ip>") != 1 {
 			return nil, errors.New("pattern must contain <ip> exactly once: " + p)
@@ -116,7 +162,8 @@ func (r *Rule) Match(line string) (netip.Addr, string, bool) {
 // number of hits inside the window, the last lines (evidence) and true, and
 // starts counting from zero again.
 func (r *Rule) Hit(ip netip.Addr, now time.Time, line string) (int, []string, bool) {
-	cutoff := now.Add(-r.window)
+	l := r.limits()
+	cutoff := now.Add(-l.window)
 	hits := r.hits[ip][:0]
 	for _, h := range r.hits[ip] {
 		if h.at.After(cutoff) {
@@ -125,7 +172,7 @@ func (r *Rule) Hit(ip netip.Addr, now time.Time, line string) (int, []string, bo
 	}
 	hits = append(hits, hit{now, truncate(line, maxEvidenceLine)})
 
-	if len(hits) < r.threshold {
+	if len(hits) < l.threshold {
 		r.hits[ip] = hits
 		return 0, nil, false
 	}
@@ -141,7 +188,7 @@ func (r *Rule) Hit(ip netip.Addr, now time.Time, line string) (int, []string, bo
 // Prune drops counters with no hit inside the window, so IPs that never
 // reach the threshold don't pile up.
 func (r *Rule) Prune(now time.Time) {
-	cutoff := now.Add(-r.window)
+	cutoff := now.Add(-r.limits().window)
 	for ip, hits := range r.hits {
 		if !hits[len(hits)-1].at.After(cutoff) {
 			delete(r.hits, ip)

@@ -37,6 +37,7 @@ func replayCmd(args []string) {
 	if err != nil {
 		log.Printf("state %s: %v", cfg.StateFile, err)
 	}
+	applyRuleSettings(cfg.rules, st.Rules, func(string, ...any) {}) // as the running agent counts
 	rules := selectRules(cfg, *only)
 
 	tallies := map[*Rule]*tally{}
