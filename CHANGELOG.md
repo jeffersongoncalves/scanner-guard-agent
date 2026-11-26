@@ -2,6 +2,14 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.3.0 - 2026-11-26
+
+### Changelog
+
+* a6ef79873859408eaeca982cd092008e7d8707f7: Update CHANGELOG (@github-actions[bot])
+* 5c19777dcf99e2dadd49db644379d9d7ad97a3fe: feat: count pulled bans in the heartbeat's active_bans (#19) (@jeffersongoncalves)
+* a9ef5841ec260afe04f092fba695bf4566cf40d9: feat: send the log lines that tripped a ban to the central app (#16) (@jeffersongoncalves)
+
 ## 2.2.2 - 2026-11-25
 
 ### Changelog
@@ -31,6 +39,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
   
   
   
+  
   ```
 
 ### Fixed
@@ -42,6 +51,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.2.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
@@ -85,6 +95,7 @@ No config change.
 sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
