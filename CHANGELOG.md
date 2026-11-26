@@ -2,6 +2,13 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.2.2 - 2026-11-25
+
+### Changelog
+
+* 10758c290b0154f30a1b4b5f8c318dfcd6eb271e: Update CHANGELOG (@github-actions[bot])
+* 4d91e1e85fdab0ceb6fb207e9764e13f8e3cc2ef: fix: end every nft script with a newline for nftables 0.8 (#18) (@jeffersongoncalves)
+
 ## 2.2.1 - 2026-11-25
 
 ### Changelog
@@ -23,6 +30,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
     ignored:   no
   
   
+  
   ```
 
 ### Fixed
@@ -34,6 +42,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.2.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 ```
@@ -76,6 +85,7 @@ No config change.
 sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
