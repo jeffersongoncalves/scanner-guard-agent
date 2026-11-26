@@ -105,7 +105,8 @@ func renderRealIP(proxies []netip.Prefix) []byte {
 	return []byte(b.String())
 }
 
-func nginxInit(dir string, proxies []netip.Prefix, out io.Writer) error {
+// nginxWriteRules creates the rule files that are missing, keeping the others.
+func nginxWriteRules(dir string, proxies []netip.Prefix, out io.Writer) error {
 	// Not created here: without it nginx.conf most likely doesn't load conf.d.
 	if fi, err := os.Stat(filepath.Join(dir, "conf.d")); err != nil || !fi.IsDir() {
 		return fmt.Errorf("%s has no conf.d directory, is it the nginx config directory? (-dir)", dir)
@@ -131,17 +132,25 @@ func nginxInit(dir string, proxies []netip.Prefix, out io.Writer) error {
 			fmt.Fprintf(out, "created %s\n", p)
 		}
 	}
+	return nil
+}
+
+func nginxInit(dir string, proxies []netip.Prefix, out io.Writer) error {
+	if err := nginxWriteRules(dir, proxies, out); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(out, `
 Nothing is blocked yet. Next:
   1. see what the rules would block in the log you already have:
        scanner-guard-agent nginx-test -dir %[1]s /var/log/nginx/access.log
      false positive? add an exception or disable the rule in %[2]s
-  2. add to each server block to protect, before its own if/rewrite/return:
+  2. turn it on per site (adds include %[3]s, tests, reloads):
+       scanner-guard-agent nginx-enable example.com
+     or by hand, in each server block, before its own if/rewrite/return:
        include %[3]s;
        include %[4]s;   # optional, limits login attempts
-  3. nginx -t && systemctl reload nginx
-  4. optional, ban who insists: enable the web_attack and web_login rules in agent.yaml.
+  3. optional, ban who insists: enable the web_attack and web_login rules in agent.yaml.
 `, dir, filepath.Join(dir, nginxRulesFile), nginxServerFile, nginxLoginFile)
 
 	if len(proxies) == 0 {

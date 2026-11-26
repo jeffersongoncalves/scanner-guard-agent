@@ -24,8 +24,9 @@ sshd / nginx / postfix logs ──► agent ──► nftables (local drop)
 - Uses its own nftables table (`inet scanner_guard`) and never touches your other rules. It coexists with fail2ban.
 - Drops in `prerouting`, before Docker's DNAT, so a ban also covers published container ports.
 - Optional nginx and Apache denylist files, for servers behind a proxy or CDN.
-- `nginx-init` command sets up nginx to block common attacks itself: SQL injection, file inclusion, XSS, exposed files, login brute force.
-- `test` command replays a log through the rules before anything gets banned.
+- `nginx-init` command sets up nginx to block common attacks itself: SQL injection, file inclusion, XSS, exposed files, login brute force. `nginx-enable` turns it on per site, tested and reverted if `nginx -t` fails; `nginx-report` sums up what it blocked.
+- `replay` command runs the rules over the logs you already have, before anything gets banned (or bans the attackers in them).
+- `status` and `ip` commands tell what is blocked on the server and why.
 
 ## Install
 
@@ -72,25 +73,26 @@ rules:
 > Otherwise a few mistyped passwords lock you out. Start with `firewall: none` to watch what it
 > would ban.
 
-Test a rule against real logs first:
+Run the rules over the logs you already have first. Each rule reads its own source: journald since
+`-since` (7 days by default), a `file` rule the whole file. Nothing is banned:
 
 ```bash
-journalctl -u ssh -u sshd --since -1d -o cat | scanner-guard-agent test -
-scanner-guard-agent test -rule nginx_scanner /var/log/nginx/access.log
+sudo scanner-guard-agent replay                       # who would be banned, per rule
+sudo scanner-guard-agent replay -rule ssh_bruteforce -since 1d
 ```
 
 Add `-ban` to also ban what the replay found: each IP over the threshold gets the next escalation
 step, is blocked in nftables and reported to the central app. Use it once on install to catch the
-attacks already in the logs. Stop the agent first, both write the same state file:
+attacks already in the logs. A running agent is stopped meanwhile and started again (both write the
+same state file):
 
 ```bash
-sudo systemctl stop scanner-guard-agent
-sudo journalctl -u ssh -u sshd --since -7d -o cat | sudo scanner-guard-agent test -ban -
-sudo systemctl start scanner-guard-agent
+sudo scanner-guard-agent replay -ban
 ```
 
 The window is ignored here, so hits spread over the whole period count together. Narrow
-`--since` if that bans too much.
+`-since` if that bans too much. `test` does the same with a log you pass yourself
+(`journalctl ... | scanner-guard-agent test [-ban] -`).
 
 Then start it:
 
@@ -261,16 +263,33 @@ Behind a proxy or CDN, also pass `-proxy`, with `cloudflare`, IPs or CIDRs (the 
 | `encoded`, `rfi`, `cms`, `empty-agent` | stricter, commented out |
 
 Run `nginx-test` on a few days of logs. On a false positive, add the path to the exceptions or comment
-the rule out, and test again. Then add to each `server` block to protect, before its own
-`if`/`rewrite`/`return`:
+the rule out, and test again. Then turn the rules on per site, by `server_name`:
+
+```bash
+sudo scanner-guard-agent nginx-sites                          # every site, 403 on or off
+sudo scanner-guard-agent nginx-enable example.com shop.test   # on
+sudo scanner-guard-agent nginx-disable example.com            # off again
+```
+
+`nginx-enable` adds `include scanner-guard/server.conf;` before the `server_name` of every server block
+of those sites (in `sites-enabled/*` and `conf.d/*.conf`, symlinks followed), runs `nginx -t` and puts
+every file back if it fails, reloads nginx once, then asks each site for an attack and for `/` on the
+port it listens on (https when it has `listen 443`/`ssl`). The attack must get `403`; the page should
+answer as before. On a [Laravel Forge](https://forge.laravel.com) site the include goes to
+`forge-conf/<id>/server/scanner-guard.conf` instead, which Forge leaves alone when it rewrites the
+site file. Sites with a regex `server_name`, or an include the commands don't see, take it by hand,
+before the block's own `if`/`rewrite`/`return`:
 
 ```nginx
 include scanner-guard/server.conf;
 include scanner-guard/login.conf;   # optional
 ```
 
+What the rules blocked, per rule, client and site (the last 24 hours by default):
+
 ```bash
-sudo nginx -t && sudo systemctl reload nginx
+sudo scanner-guard-agent nginx-report
+sudo scanner-guard-agent nginx-report -since 7d -host example.com
 ```
 
 Blocked requests get a `403` and go to `/var/log/nginx/scanner-guard.log` with the name of the rule,
@@ -310,8 +329,8 @@ This is a filter for common probes, not a WAF, and it doesn't fix a vulnerable a
 - The logrotate rule of the nginx package covers the log, as long as it rotates `/var/log/nginx/*.log`.
 - To get the rules of a newer version, move `conf.d/scanner-guard-rules.conf` away, run `nginx-init` and bring
   your changes over.
-- To undo: remove the `include` lines, delete the files, reload nginx. Remove the agent rules and restart
-  the agent.
+- To undo: `nginx-disable` every site (or remove the `include` lines), delete the files, reload nginx.
+  Remove the agent rules and restart the agent.
 - `nginx-test` reads the request line and User-Agent of the combined format, also with the site in front
   (`$server_name $remote_addr - ...`), told apart by where the `-` falls. It fails on rules it can't
   run (`include`, lookaheads) instead of skipping them, and doesn't cover the login limit.
@@ -319,6 +338,7 @@ This is a filter for common probes, not a WAF, and it doesn't fix a vulnerable a
 ## Manage bans
 
 ```bash
+scanner-guard-agent status                                          # service, central, blocked count, rules, last bans
 scanner-guard-agent ip 203.0.113.7                                  # blocked? local ban, offenses, ignored?
 nft list table inet scanner_guard                                   # everything blocked
 nft delete element inet scanner_guard ban4 '{ 203.0.113.7 }'        # unban now (ban6 for IPv6)
