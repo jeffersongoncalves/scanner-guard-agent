@@ -101,8 +101,10 @@ func nftElem(p netip.Prefix) string {
 	return p.String()
 }
 
+// The script goes through /dev/stdin, not "-": nft before 0.9 has no stdin
+// shorthand and reads "-" as a file name (Ubuntu 18.04 ships 0.8.2).
 func nft(script string) error {
-	cmd := exec.Command("nft", "-f", "-")
+	cmd := exec.Command("nft", "-f", "/dev/stdin")
 	cmd.Stdin = strings.NewReader(script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("nft: %v: %s", err, strings.TrimSpace(string(out)))
