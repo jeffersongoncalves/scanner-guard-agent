@@ -116,6 +116,9 @@ func (c *Central) Report(ctx context.Context, b Ban) error {
 		"expires_at":    b.At.Add(b.Duration).Format(time.RFC3339),
 		"offense":       b.Offense,
 		"source":        c.source,
+		// The lines that tripped the rule, with the IP taken out for the same
+		// reason. A central app that doesn't know the field ignores it.
+		"evidence": redact(b.Evidence, b.IP),
 	})
 	if err != nil {
 		return err
@@ -219,6 +222,25 @@ func (c *Central) Pull(ctx context.Context) (*Denylist, error) {
 		return nil, fmt.Errorf("decode denylist: %w", err)
 	}
 	return &dl, nil
+}
+
+// redact replaces ip in each line with <ip>, in the spellings a log writes it:
+// as is, upper-case (IPv6) and fully expanded (IPv6). Never nil, so the field
+// is always a JSON list.
+// ponytail: only the banned IP is taken out; a rule whose lines hold other IPs would send them.
+func redact(lines []string, ip netip.Addr) []string {
+	forms := []string{ip.String(), strings.ToUpper(ip.String())}
+	if ip.Is6() {
+		forms = append(forms, ip.StringExpanded(), strings.ToUpper(ip.StringExpanded()))
+	}
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		for _, f := range forms {
+			l = strings.ReplaceAll(l, f, "<ip>")
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 func truncate(s string, n int) string {

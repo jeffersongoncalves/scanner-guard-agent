@@ -112,8 +112,9 @@ func (a *Agent) watch(ctx context.Context, r *Rule) {
 				continue
 			}
 			now := time.Now()
-			if hits, trip := r.Hit(ip, now); trip {
+			if hits, evidence, trip := r.Hit(ip, now, line); trip {
 				if b, ok := a.decide(r, ip, pattern, hits, now); ok {
+					b.Evidence = evidence
 					_ = a.enforce(ctx, b) // logged; the state already lets it retry
 				}
 			}

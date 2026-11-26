@@ -125,7 +125,8 @@ func testCmd(args []string) {
 	}
 
 	counts := map[*Rule]map[netip.Addr]int{}
-	patterns := map[*Rule]map[netip.Addr]string{} // last pattern matched, sent as matched_value
+	patterns := map[*Rule]map[netip.Addr]string{}   // last pattern matched, sent as matched_value
+	evidence := map[*Rule]map[netip.Addr][]string{} // last matching lines, sent as evidence
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -137,9 +138,14 @@ func testCmd(args []string) {
 				if counts[r] == nil {
 					counts[r] = map[netip.Addr]int{}
 					patterns[r] = map[netip.Addr]string{}
+					evidence[r] = map[netip.Addr][]string{}
 				}
 				counts[r][ip]++
 				patterns[r][ip] = p
+				if *ban {
+					ev := append(evidence[r][ip], truncate(sc.Text(), maxEvidenceLine))
+					evidence[r][ip] = ev[max(0, len(ev)-maxEvidence):]
+				}
 			}
 		}
 	}
@@ -179,6 +185,7 @@ func testCmd(args []string) {
 				mark = "  <- would ban"
 			default:
 				if b, ok := a.decide(r, ip, patterns[r][ip], n, now); ok {
+					b.Evidence = evidence[r][ip]
 					mark = fmt.Sprintf("  <- banned %s (offense %d)", b.Duration, b.Offense)
 					if err := a.enforce(ctx, b); err != nil {
 						mark = fmt.Sprintf("  <- BAN FAILED (offense %d, still reported): %v", b.Offense, err)
