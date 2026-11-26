@@ -35,12 +35,24 @@ func main() {
 		runCmd(os.Args[2:])
 	case "test":
 		testCmd(os.Args[2:])
+	case "replay":
+		replayCmd(os.Args[2:])
+	case "status":
+		statusCmd(os.Args[2:])
 	case "ip":
 		ipCmd(os.Args[2:])
 	case "nginx-init":
 		nginxInitCmd(os.Args[2:])
 	case "nginx-test":
 		nginxTestCmd(os.Args[2:])
+	case "nginx-sites":
+		nginxSitesCmd(os.Args[2:])
+	case "nginx-enable":
+		nginxEnableCmd(os.Args[2:])
+	case "nginx-disable":
+		nginxDisableCmd(os.Args[2:])
+	case "nginx-report":
+		nginxReportCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	default:
@@ -53,13 +65,24 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `scanner-guard-agent %s
 
 Usage:
-  scanner-guard-agent run  [-config %s]
-  scanner-guard-agent test [-config %s] [-rule NAME] [-ban] LOGFILE|-
-  scanner-guard-agent ip   [-config %s] IP...
-  scanner-guard-agent nginx-init [-dir %s] [-proxy cloudflare,CIDR,...]
-  scanner-guard-agent nginx-test [-dir %s] ACCESSLOG|-
+  scanner-guard-agent run    [-config FILE]
+  scanner-guard-agent status [-config FILE] [-n 10]               what is blocked, the rules, the last bans
+  scanner-guard-agent ip     [-config FILE] IP...                  why an IP is blocked, or not
+  scanner-guard-agent replay [-config FILE] [-since 7d] [-rule NAME] [-ban]
+                                                                   the rules over the past logs: who would be banned (-ban: ban them)
+  scanner-guard-agent test   [-config FILE] [-rule NAME] [-ban] LOGFILE|-
+
+  scanner-guard-agent nginx-init    [-dir DIR] [-proxy cloudflare,CIDR,...]
+  scanner-guard-agent nginx-test    [-dir DIR] ACCESSLOG|-        what the 403 rules would block in a log
+  scanner-guard-agent nginx-sites   [-dir DIR]                     every site, 403 on or off
+  scanner-guard-agent nginx-enable  [-dir DIR] SITE...             403 on (tested, reverted if nginx -t fails)
+  scanner-guard-agent nginx-disable [-dir DIR] SITE...             403 off
+  scanner-guard-agent nginx-report  [-since 24h] [-host SITE] [-n 10] [LOG|-]
+                                                                   what the 403 rules blocked
   scanner-guard-agent version
-`, version, defaultConfig, defaultConfig, defaultConfig, defaultNginxDir, defaultNginxDir)
+
+FILE defaults to %s, DIR to %s, LOG to %s.
+`, version, defaultConfig, defaultNginxDir, defaultGuardLog)
 }
 
 func runCmd(args []string) {
@@ -124,29 +147,16 @@ func testCmd(args []string) {
 		in = f
 	}
 
-	counts := map[*Rule]map[netip.Addr]int{}
-	patterns := map[*Rule]map[netip.Addr]string{}   // last pattern matched, sent as matched_value
-	evidence := map[*Rule]map[netip.Addr][]string{} // last matching lines, sent as evidence
+	rules := selectRules(cfg, *only)
+	tallies := map[*Rule]*tally{}
+	for _, r := range rules {
+		tallies[r] = newTally()
+	}
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
-		for _, r := range cfg.rules {
-			if *only != "" && r.Name != *only {
-				continue
-			}
-			if ip, p, ok := r.Match(sc.Text()); ok {
-				if counts[r] == nil {
-					counts[r] = map[netip.Addr]int{}
-					patterns[r] = map[netip.Addr]string{}
-					evidence[r] = map[netip.Addr][]string{}
-				}
-				counts[r][ip]++
-				patterns[r][ip] = p
-				if *ban {
-					ev := append(evidence[r][ip], truncate(sc.Text(), maxEvidenceLine))
-					evidence[r][ip] = ev[max(0, len(ev)-maxEvidence):]
-				}
-			}
+		for _, r := range rules {
+			tallies[r].add(r, sc.Text(), *ban)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -156,37 +166,91 @@ func testCmd(args []string) {
 	var a *Agent
 	isIgnored := cfg.ignored
 	if *ban {
-		a = scanAgent(cfg)
+		if a, err = scanAgent(cfg); err != nil {
+			log.Fatal(err)
+		}
 		isIgnored = a.ignored // also what the central app listed on the last pull
 	}
-	ctx := context.Background()
-	now := time.Now()
+	judge(os.Stdout, rules, tallies, isIgnored, a, time.Now())
+	if a != nil {
+		a.reports.Wait() // a one-shot run must not exit before the central POSTs land
+	}
+}
 
+func selectRules(cfg *Config, only string) []*Rule {
+	var rules []*Rule
 	for _, r := range cfg.rules {
-		if *only != "" && r.Name != *only {
-			continue
+		if only == "" || r.Name == only {
+			rules = append(rules, r)
 		}
-		ips := make([]netip.Addr, 0, len(counts[r]))
+	}
+	if len(rules) == 0 {
+		log.Fatalf("no rule named %q", only)
+	}
+	return rules
+}
+
+// tally counts the lines of one rule per IP, without a window: replayed lines
+// carry no usable time.
+type tally struct {
+	counts   map[netip.Addr]int
+	patterns map[netip.Addr]string   // last pattern matched, sent as matched_value
+	evidence map[netip.Addr][]string // last matching lines, sent as evidence
+}
+
+func newTally() *tally {
+	return &tally{counts: map[netip.Addr]int{}, patterns: map[netip.Addr]string{}, evidence: map[netip.Addr][]string{}}
+}
+
+func (t *tally) add(r *Rule, line string, keepEvidence bool) {
+	ip, p, ok := r.Match(line)
+	if !ok {
+		return
+	}
+	t.counts[ip]++
+	t.patterns[ip] = p
+	if keepEvidence {
+		ev := append(t.evidence[ip], truncate(line, maxEvidenceLine))
+		t.evidence[ip] = ev[max(0, len(ev)-maxEvidence):]
+	}
+}
+
+// judge prints every IP each rule matched, most lines first, and bans the ones
+// over the threshold when a is set (a nil: only says who would be). It returns
+// how many are (or would be) banned and how many are ignored.
+func judge(w io.Writer, rules []*Rule, tallies map[*Rule]*tally, isIgnored func(netip.Prefix) bool, a *Agent, now time.Time) (bans, ignored int) {
+	ctx := context.Background()
+	for _, r := range rules {
+		t := tallies[r]
+		ips := make([]netip.Addr, 0, len(t.counts))
 		total := 0
-		for ip, n := range counts[r] {
+		for ip, n := range t.counts {
 			ips = append(ips, ip)
 			total += n
 		}
-		sort.Slice(ips, func(i, j int) bool { return counts[r][ips[i]] > counts[r][ips[j]] })
+		sort.Slice(ips, func(i, j int) bool {
+			if a, b := t.counts[ips[i]], t.counts[ips[j]]; a != b {
+				return a > b
+			}
+			return ips[i].Less(ips[j])
+		})
 
-		fmt.Printf("rule %s: %d matching lines, %d IPs\n", r.Name, total, len(ips))
+		fmt.Fprintf(w, "rule %s: %d matching lines, %d IPs\n", r.Name, total, len(ips))
 		for _, ip := range ips {
-			n, mark := counts[r][ip], ""
+			n, mark := t.counts[ip], ""
 			switch {
 			case isIgnored(hostPrefix(ip)):
 				mark = "  (ignored)"
+				ignored++
 			case n < r.threshold:
 			case a == nil:
 				mark = "  <- would ban"
+				bans++
 			default:
-				if b, ok := a.decide(r, ip, patterns[r][ip], n, now); ok {
-					b.Evidence = evidence[r][ip]
+				if b, ok := a.decide(r, ip, t.patterns[ip], n, now); ok {
+					b.Evidence = t.evidence[ip]
 					mark = fmt.Sprintf("  <- banned %s (offense %d)", b.Duration, b.Offense)
+					bans++
 					if err := a.enforce(ctx, b); err != nil {
 						mark = fmt.Sprintf("  <- BAN FAILED (offense %d, still reported): %v", b.Offense, err)
 					}
@@ -194,31 +258,29 @@ func testCmd(args []string) {
 					mark = "  (already banned)"
 				}
 			}
-			fmt.Printf("  %6d  %s%s\n", n, ip, mark)
+			fmt.Fprintf(w, "  %6d  %s%s\n", n, ip, mark)
 		}
 	}
-
-	if a != nil {
-		a.reports.Wait() // a one-shot run must not exit before the central POSTs land
-	}
+	return bans, ignored
 }
 
-// scanAgent builds an agent for test -ban. It loads and saves the same state
-// file as the daemon, so the escalation ladder carries on, but it does not
-// recreate an existing nftables table (that would drop every running ban).
-func scanAgent(cfg *Config) *Agent {
+// scanAgent builds an agent for test -ban and replay -ban. It loads and saves
+// the same state file as the daemon, so the escalation ladder carries on, but
+// it does not recreate an existing nftables table (that would drop every
+// running ban).
+func scanAgent(cfg *Config) (*Agent, error) {
 	fw, err := newFirewall(cfg.Firewall)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	if n, ok := fw.(nftables); ok {
 		if err := n.Ensure(); err != nil {
-			log.Fatalf("firewall init: %v", err)
+			return nil, fmt.Errorf("firewall init: %w", err)
 		}
 	}
 	st, err := loadState(cfg.StateFile)
 	if err != nil {
-		log.Fatalf("state %s: %v", cfg.StateFile, err)
+		return nil, fmt.Errorf("state %s: %w", cfg.StateFile, err)
 	}
-	return newAgent(cfg, fw, st)
+	return newAgent(cfg, fw, st), nil
 }
