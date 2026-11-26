@@ -500,3 +500,15 @@ func TestRunPullsIgnoreFirst(t *testing.T) {
 		t.Errorf("ignore = %v, pulled = %v", a.state.Ignore, a.pulled)
 	}
 }
+
+// nft 0.8 (Ubuntu 18.04) rejects a last statement with no newline after it.
+func TestNftScriptEndsWithANewline(t *testing.T) {
+	for in, want := range map[string]string{
+		"add element inet scanner_guard ban4 { 192.0.2.1 timeout 60s }": "add element inet scanner_guard ban4 { 192.0.2.1 timeout 60s }\n",
+		nftSetup: nftSetup,
+	} {
+		if got := nftScript(in); got != want {
+			t.Errorf("nftScript(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -102,14 +102,23 @@ func nftElem(p netip.Prefix) string {
 }
 
 // The script goes through /dev/stdin, not "-": nft before 0.9 has no stdin
-// shorthand and reads "-" as a file name (Ubuntu 18.04 ships 0.8.2).
+// shorthand and reads "-" as a file name (Ubuntu 18.04 ships 0.8.2). It always
+// ends with a newline: 0.8 fails a last statement without one ("unexpected
+// end of file").
 func nft(script string) error {
 	cmd := exec.Command("nft", "-f", "/dev/stdin")
-	cmd.Stdin = strings.NewReader(script)
+	cmd.Stdin = strings.NewReader(nftScript(script))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("nft: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func nftScript(script string) string {
+	if strings.HasSuffix(script, "\n") {
+		return script
+	}
+	return script + "\n"
 }
 
 // logOnly is a dry run: decide and report bans, block nothing.
