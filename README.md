@@ -153,7 +153,8 @@ sends it (`ip_ignore` in `laravel-scanner-guard`).
 > [#8](https://github.com/jeffersongoncalves/scanner-guard-agent/issues/8), signing the response.
 
 After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
-`version`, `rules`, `active_bans`, `started_at`). On the central app, run the
+`version`, `rules`, `active_bans`, `started_at`). `active_bans` counts everything the firewall
+blocks: this server's bans plus the pulled ones (before 2.3.0: only its own). On the central app, run the
 `create_scanner_guard_agents_table` migration, then spot dead servers with
 `ScannerGuardAgent::query()->offline()->get()`. Central versions without the endpoint answer
 `404`. The agent logs that and keeps working.

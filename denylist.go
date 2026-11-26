@@ -110,6 +110,26 @@ func (a *Agent) denied(now time.Time) ([]denied, bool) {
 		return nil, false
 	}
 
+	active := a.blockedLocked(now)
+	out := make([]denied, 0, len(active))
+	for p, exp := range active {
+		out = append(out, denied{p, exp})
+	}
+	slices.SortFunc(out, func(x, y denied) int {
+		if x.expires.IsZero() != y.expires.IsZero() {
+			if x.expires.IsZero() {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Or(x.prefix.Addr().Compare(y.prefix.Addr()), cmp.Compare(x.prefix.Bits(), y.prefix.Bits()))
+	})
+	return out, true
+}
+
+// blockedLocked maps everything this server blocks now, local and pulled
+// bans, to its expiry (zero = static). The longest ban of an IP wins.
+func (a *Agent) blockedLocked(now time.Time) map[netip.Prefix]time.Time {
 	active := map[netip.Prefix]time.Time{}
 	for p, exp := range a.pulled {
 		if exp.IsZero() || exp.After(now) {
@@ -126,21 +146,7 @@ func (a *Agent) denied(now time.Time) ([]denied, bool) {
 		}
 		active[p] = until
 	}
-
-	out := make([]denied, 0, len(active))
-	for p, exp := range active {
-		out = append(out, denied{p, exp})
-	}
-	slices.SortFunc(out, func(x, y denied) int {
-		if x.expires.IsZero() != y.expires.IsZero() {
-			if x.expires.IsZero() {
-				return -1
-			}
-			return 1
-		}
-		return cmp.Or(x.prefix.Addr().Compare(y.prefix.Addr()), cmp.Compare(x.prefix.Bits(), y.prefix.Bits()))
-	})
-	return out, true
+	return active
 }
 
 // setPulled publishes the valid entries of the central denylist.
