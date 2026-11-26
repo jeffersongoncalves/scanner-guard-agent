@@ -49,6 +49,14 @@ func TestDenylistFormats(t *testing.T) {
 	}
 }
 
+func TestHeartbeatCountsLocalAndPulledBans(t *testing.T) {
+	a := denylistAgent(time.Now())
+	// 192.0.2.0/24, 203.0.113.7 (local and pulled, counted once), 2001:db8::1; the expired ones not.
+	if got := a.heartbeat().ActiveBans; got != 3 {
+		t.Errorf("active_bans = %d, want 3", got)
+	}
+}
+
 func TestDenylistStaticBeatsLocalBan(t *testing.T) {
 	t0 := time.Unix(1_700_000_000, 0)
 	a := denylistAgent(t0)

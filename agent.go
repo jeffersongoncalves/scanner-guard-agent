@@ -295,14 +295,8 @@ func (a *Agent) heartbeat() Heartbeat {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	now := time.Now()
-	active := 0
-	for _, until := range a.state.Banned {
-		if until.After(now) {
-			active++
-		}
-	}
-	return Heartbeat{Version: version, Rules: rules, ActiveBans: active, StartedAt: a.started}
+	// Everything the firewall blocks: this server's bans plus the pulled ones.
+	return Heartbeat{Version: version, Rules: rules, ActiveBans: len(a.blockedLocked(time.Now())), StartedAt: a.started}
 }
 
 // apply brings the firewall in line with the pulled denylist: adds new or
