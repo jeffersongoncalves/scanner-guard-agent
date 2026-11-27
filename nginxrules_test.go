@@ -97,7 +97,7 @@ func TestSetNginxRules(t *testing.T) {
 	a.nginxDir, a.nginxOptional, a.nginx = dir, opt, f.ops()
 
 	// Not included yet (nginx-init not run): nothing written.
-	a.setNginxRules([]string{"cms"})
+	a.setNginxRules([]string{"cms"}, time.Now())
 	if _, err := os.Stat(filepath.Join(opt, "path.conf")); err == nil || f.reloads != 0 {
 		t.Fatal("wrote optional rules nginx doesn't include")
 	}
@@ -106,7 +106,7 @@ func TestSetNginxRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.nginxRules = nil
-	a.setNginxRules([]string{"cms", "empty-agent", "bogus"})
+	a.setNginxRules([]string{"cms", "empty-agent", "bogus"}, time.Now())
 	path, _ := os.ReadFile(filepath.Join(opt, "path.conf"))
 	agent, _ := os.ReadFile(filepath.Join(opt, "agent.conf"))
 	uri, _ := os.ReadFile(filepath.Join(opt, "uri.conf"))
@@ -114,17 +114,38 @@ func TestSetNginxRules(t *testing.T) {
 		t.Fatalf("reloads %d\npath %s\nagent %s\nuri %s", f.reloads, path, agent, uri)
 	}
 
-	a.setNginxRules([]string{"cms", "empty-agent", "bogus"})
+	a.setNginxRules([]string{"cms", "empty-agent", "bogus"}, time.Now())
 	if f.reloads != 1 {
 		t.Error("reloaded for the same set")
 	}
 
 	// nginx -t fails: the previous files stay, and the same set is not retried.
 	f.testErr = errors.New("exit status 1")
-	a.setNginxRules([]string{"rfi"})
+	a.setNginxRules([]string{"rfi"}, time.Now())
 	if got, _ := os.ReadFile(filepath.Join(opt, "path.conf")); !strings.Contains(string(got), " cms;") || f.reloads != 1 {
 		t.Errorf("not restored after nginx -t failed: %s", got)
 	}
+
+	// The failure shows in status; the same set is tried again only after nginxRetry.
+	failed := a.state.Nginx
+	if failed == nil || !strings.Contains(failed.Error, "nginx -t failed") {
+		t.Fatalf("failure not recorded: %+v", failed)
+	}
+	var out strings.Builder
+	writeStatus(&out, &Config{}, a.state, "active", nil, nil, 0, time.Now())
+	if !strings.Contains(out.String(), "rfi FAILED") {
+		t.Errorf("status:\n%s", out.String())
+	}
+	f.testErr = nil
+	a.setNginxRules([]string{"rfi"}, failed.At.Add(time.Minute))
+	if f.reloads != 1 {
+		t.Error("retried before nginxRetry")
+	}
+	a.setNginxRules([]string{"rfi"}, failed.At.Add(nginxRetry))
+	if got, _ := os.ReadFile(filepath.Join(opt, "uri.conf")); !strings.Contains(string(got), " rfi;") || f.reloads != 2 || a.state.Nginx.Error != "" {
+		t.Errorf("not retried after nginxRetry (reloads %d, state %+v): %s", f.reloads, a.state.Nginx, got)
+	}
+	a.setNginxRules([]string{"cms", "empty-agent"}, time.Now())
 
 	// What nginx-test reads through the include is what nginx would.
 	conf := strings.ReplaceAll(string(nginxRulesConf), nginxOptionalDir, filepath.ToSlash(opt))

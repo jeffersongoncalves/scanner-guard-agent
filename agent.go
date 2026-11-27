@@ -31,7 +31,8 @@ type Agent struct {
 	reports   sync.WaitGroup // in-flight central reports; one-shot commands wait on it
 
 	// Optional nginx rules from the central app (nginxrules.go).
-	nginxRules    *string // the last set handled, nil before the first
+	nginxRules    *string   // the last set handled, nil before the first
+	nginxFailed   time.Time // when that set last failed, zero if it worked
 	nginxDir      string
 	nginxOptional string
 	nginx         nginxOps
@@ -306,7 +307,7 @@ func (a *Agent) pull(ctx context.Context) *Denylist {
 		a.setRuleSettings(*dl.AgentRules)
 	}
 	if dl.NginxRules != nil {
-		a.setNginxRules(*dl.NginxRules)
+		a.setNginxRules(*dl.NginxRules, time.Now())
 	}
 	for _, r := range dl.Diagnostics {
 		a.startDiagnosis(ctx, r)

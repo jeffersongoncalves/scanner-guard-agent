@@ -91,6 +91,15 @@ func writeStatus(w io.Writer, cfg *Config, st *state, service string, sets map[s
 		}
 		fmt.Fprintf(w, "  %-16s %s%s  <- %s\n", r.Name, l, from, src)
 	}
+	if n := st.Nginx; n != nil {
+		names := cmp.Or(strings.Join(n.Rules, ", "), "none")
+		if n.Error == "" {
+			fmt.Fprintf(w, "  nginx optional rules from the central app: %s (applied %s)\n", names, n.At.Local().Format("2006-01-02 15:04"))
+		} else {
+			fmt.Fprintf(w, "  nginx optional rules from the central app: %s FAILED %s, retried every %s:\n    %s\n",
+				names, n.At.Local().Format("2006-01-02 15:04"), shortDur(nginxRetry), strings.ReplaceAll(strings.TrimSpace(n.Error), "\n", "\n    "))
+		}
+	}
 
 	type local struct {
 		ip    netip.Addr

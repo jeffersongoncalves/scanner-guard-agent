@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Optional nginx rules: off by default, turned on by name from the central app
@@ -87,13 +88,18 @@ func optionalChanges(dir string, names []string) ([]fileChange, []string, error)
 	return changes, unknown, nil
 }
 
+// A set of optional rules that failed is tried again after this long (nginx
+// may have been broken by something else meanwhile), or as soon as the
+// central app sends another set.
+const nginxRetry = 10 * time.Minute
+
 // setNginxRules writes the optional rules the central app turned on and
-// reloads nginx, unless nothing changed. A set that failed (nginx -t) is not
-// tried again until the central app sends another one.
-func (a *Agent) setNginxRules(names []string) {
+// reloads nginx, unless nothing changed. The outcome goes in the state, for
+// status.
+func (a *Agent) setNginxRules(names []string, now time.Time) {
 	key := strings.Join(names, ",")
 	a.mu.Lock()
-	if a.nginxRules != nil && *a.nginxRules == key {
+	if a.nginxRules != nil && *a.nginxRules == key && (a.nginxFailed.IsZero() || now.Sub(a.nginxFailed) < nginxRetry) {
 		a.mu.Unlock()
 		return
 	}
@@ -104,18 +110,46 @@ func (a *Agent) setNginxRules(names []string) {
 		log.Printf("dry-run: nginx rules from central (%s) are not written", key)
 		return
 	}
-	rules, err := os.ReadFile(filepath.Join(a.nginxDir, nginxRulesFile))
-	if err != nil {
-		if len(names) > 0 {
-			log.Printf("nginx rules from central (%s): no %s on this server, skipped", key, nginxRulesFile)
-		}
-		return
+	changed, err := a.writeNginxRules(names)
+	switch {
+	case err != nil:
+		log.Printf("nginx rules from central (%s): %v", key, err)
+	case changed:
+		log.Printf("nginx rules from central: %s on, nginx reloaded", cmp.Or(key, "none"))
 	}
-	if !bytes.Contains(rules, []byte(nginxOptionalDir)) {
-		if len(names) > 0 {
-			log.Printf("nginx rules from central (%s): %s doesn't include them yet, run `scanner-guard-agent nginx-init` once", key, nginxRulesFile)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.nginxFailed = time.Time{}
+	applied := &nginxApplied{Rules: names, At: now}
+	if err != nil {
+		a.nginxFailed, applied.Error = now, err.Error()
+	}
+	if !changed && err == nil && a.state.Nginx != nil && a.state.Nginx.Error == "" && strings.Join(a.state.Nginx.Rules, ",") == key {
+		return // nothing new to record
+	}
+	a.state.Nginx = applied
+	if a.statePath != "" {
+		if serr := a.state.save(a.statePath); serr != nil {
+			log.Printf("save state: %v", serr)
 		}
-		return
+	}
+}
+
+// writeNginxRules writes the optional files and reloads nginx when they
+// changed. A server without the rules file only matters when names is not
+// empty.
+func (a *Agent) writeNginxRules(names []string) (bool, error) {
+	rules, err := os.ReadFile(filepath.Join(a.nginxDir, nginxRulesFile))
+	switch {
+	case err != nil && len(names) == 0:
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("no %s on this server", nginxRulesFile)
+	case !bytes.Contains(rules, []byte(nginxOptionalDir)) && len(names) == 0:
+		return false, nil
+	case !bytes.Contains(rules, []byte(nginxOptionalDir)):
+		return false, fmt.Errorf("%s doesn't include them yet, run `scanner-guard-agent nginx-init` once", nginxRulesFile)
 	}
 
 	changes, unknown, err := optionalChanges(a.nginxOptional, names)
@@ -125,12 +159,7 @@ func (a *Agent) setNginxRules(names []string) {
 	if err == nil {
 		err = applyAndReload(changes, a.nginx)
 	}
-	switch {
-	case err != nil:
-		log.Printf("nginx rules from central (%s): %v", key, err)
-	case len(changes) > 0:
-		log.Printf("nginx rules from central: %s on, nginx reloaded", cmp.Or(key, "none"))
-	}
+	return err == nil && len(changes) > 0, err
 }
 
 var nginxMapHeader = regexp.MustCompile(`^\s*map\s+\S+\s+\$(sg_uri|sg_path|sg_agent)\s*\{`)
