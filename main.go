@@ -41,6 +41,8 @@ func main() {
 		statusCmd(os.Args[2:])
 	case "ip":
 		ipCmd(os.Args[2:])
+	case "monitor":
+		monitorCmd(os.Args[2:])
 	case "nginx-init":
 		nginxInitCmd(os.Args[2:])
 	case "nginx-test":
@@ -71,6 +73,8 @@ Usage:
   scanner-guard-agent replay [-config FILE] [-since 7d] [-rule NAME] [-ban]
                                                                    the rules over the past logs: who would be banned (-ban: ban them)
   scanner-guard-agent test   [-config FILE] [-rule NAME] [-ban] LOGFILE|-
+  scanner-guard-agent monitor [-config FILE] [-no-restart] [NAME on|off]
+                                                                   ready-made monitors (ssh-logins), on or off
 
   scanner-guard-agent nginx-init    [-dir DIR] [-proxy cloudflare,CIDR,...]
   scanner-guard-agent nginx-test    [-dir DIR] ACCESSLOG|-        what the 403 rules would block in a log

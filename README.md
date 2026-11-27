@@ -200,6 +200,19 @@ same event (rule, IP and fields) goes out at most once a day, so a login every m
 not 1440. A central app without the endpoint answers `404`: the agent logs that once and keeps the
 events in its own log only. `replay` and `test` list what a report rule matches, never as bans.
 
+Ready-made monitors switch on and off without editing `agent.yaml`:
+
+```bash
+sudo scanner-guard-agent monitor                 # the monitors, on or off
+sudo scanner-guard-agent monitor ssh-logins on   # the ssh_login rule above
+sudo scanner-guard-agent monitor ssh-logins off
+```
+
+`on` writes the rule to `rules.d/ssh_login.yaml` next to the config (left out again if the config no
+longer loads with it), `off` deletes it, and both restart a running agent (`-no-restart` to skip).
+Every `rules.d/*.yaml` file adds its `rules:` to the config's, so hand-written rules can live there
+too. A monitor whose rule is already in `agent.yaml` is reported as on; turn that one off there.
+
 Without `central.url` the agent runs standalone and only bans locally.
 
 ## Behind a proxy or CDN: nginx and Apache denylists
