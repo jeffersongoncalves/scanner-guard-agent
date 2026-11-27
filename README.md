@@ -171,11 +171,34 @@ count when the steps change: its next ban takes the new step for that count. `st
 rules set by the central app, and `replay` counts with the same values as the running agent.
 
 After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
-`version`, `rules`, `active_bans`, `started_at`). `active_bans` counts everything the firewall
-blocks: this server's bans plus the pulled ones (before 2.3.0: only its own). On the central app, run the
+`version`, `rules`, `active_bans`, `started_at`, `matches`). `active_bans` counts everything the firewall
+blocks: this server's bans plus the pulled ones (before 2.3.0: only its own). `matches` counts the
+matching lines per rule since the last heartbeat that got through (ignored IPs left out, except on
+report rules), so the central app can chart the attacks per server. On the central app, run the
 `create_scanner_guard_agents_table` migration, then spot dead servers with
 `ScannerGuardAgent::query()->offline()->get()`. Central versions without the endpoint answer
 `404`. The agent logs that and keeps working.
+
+### Report rules (events, no bans)
+
+A rule with `report: true` never bans: each match is logged and sent to `<central.url>/events`, so
+the central app can tell when something worth knowing happens, an SSH login from a new IP or with a
+new key, say. Named groups in the patterns, other than `<ip>`, become the event's fields:
+
+```yaml
+  - name: ssh_login
+    journald: [ssh.service, sshd.service]
+    report: true # no threshold, window or ban
+    patterns:
+      - 'Accepted (?P<method>\S+) for (?P<user>\S+) from <ip> port \d+ ssh2(?:: \S+ (?P<key>SHA256:\S+))?'
+```
+
+The event carries `source`, `rule`, `ip`, `pattern`, `fields` (`{"method": "publickey", "user":
+"deploy", "key": "SHA256:..."}`), `line` (the log line, the IP replaced by `<ip>`), `ignored` (the IP
+is on an ignore list: sent anyway, a new key logging in from the office is still news) and `at`. The
+same event (rule, IP and fields) goes out at most once a day, so a login every minute is one event,
+not 1440. A central app without the endpoint answers `404`: the agent logs that once and keeps the
+events in its own log only. `replay` and `test` list what a report rule matches, never as bans.
 
 Without `central.url` the agent runs standalone and only bans locally.
 

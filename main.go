@@ -235,10 +235,15 @@ func judge(w io.Writer, rules []*Rule, tallies map[*Rule]*tally, isIgnored func(
 			return ips[i].Less(ips[j])
 		})
 
-		fmt.Fprintf(w, "rule %s: %d matching lines, %d IPs\n", r.Name, total, len(ips))
+		kind := ""
+		if r.report {
+			kind = " (report only: never bans)"
+		}
+		fmt.Fprintf(w, "rule %s%s: %d matching lines, %d IPs\n", r.Name, kind, total, len(ips))
 		for _, ip := range ips {
 			n, mark := t.counts[ip], ""
 			switch {
+			case r.report: // events, never bans
 			case isIgnored(hostPrefix(ip)):
 				mark = "  (ignored)"
 				ignored++

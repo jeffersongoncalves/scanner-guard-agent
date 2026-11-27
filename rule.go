@@ -25,8 +25,10 @@ type Rule struct {
 	raw      []string
 	local    limits                 // agent.yaml's
 	cur      atomic.Pointer[limits] // in force: local, or the central app's (swapped by a pull)
+	report   bool                   // never bans: each match is an event for the central app
 
-	hits map[netip.Addr][]hit
+	hits    map[netip.Addr][]hit
+	matched atomic.Int64 // matches since the last heartbeat that got through
 }
 
 // limits are the knobs of a rule the central app may set (agent_rules).
@@ -106,6 +108,9 @@ func newRule(rc RuleConfig) (*Rule, error) {
 		return nil, errors.New("set exactly one of file or journald")
 	case len(rc.Patterns) == 0:
 		return nil, errors.New("no patterns")
+	case rc.Report && (rc.Threshold != 0 || rc.Window != 0 || len(rc.Ban) != 0):
+		return nil, errors.New("a report rule never bans: drop threshold, window and ban")
+	case rc.Report:
 	case rc.Threshold < 1:
 		return nil, errors.New("threshold must be at least 1")
 	case rc.Window <= 0:
@@ -120,6 +125,7 @@ func newRule(rc RuleConfig) (*Rule, error) {
 		journald: rc.Journald,
 		raw:      rc.Patterns,
 		local:    limits{threshold: rc.Threshold, window: time.Duration(rc.Window)},
+		report:   rc.Report,
 		hits:     map[netip.Addr][]hit{},
 	}
 	for _, d := range rc.Ban {
@@ -144,6 +150,16 @@ func newRule(rc RuleConfig) (*Rule, error) {
 
 // Match returns the IP and the pattern (as configured) a line matched.
 func (r *Rule) Match(line string) (netip.Addr, string, bool) {
+	ip, pattern, _, ok := r.matchFields(line)
+	return ip, pattern, ok
+}
+
+// Most a field of an event carries.
+const maxFieldLen = 255
+
+// matchFields is Match plus the other named groups of the pattern, (?P<user>\S+)
+// say, as the fields of an event. Empty groups are left out.
+func (r *Rule) matchFields(line string) (netip.Addr, string, map[string]string, bool) {
 	for i, re := range r.patterns {
 		m := re.FindStringSubmatch(line)
 		if m == nil {
@@ -153,9 +169,15 @@ func (r *Rule) Match(line string) (netip.Addr, string, bool) {
 		if err != nil {
 			continue
 		}
-		return ip.Unmap().WithZone(""), r.raw[i], true
+		fields := map[string]string{}
+		for j, name := range re.SubexpNames() {
+			if name != "" && name != "ip" && m[j] != "" {
+				fields[name] = truncate(m[j], maxFieldLen)
+			}
+		}
+		return ip.Unmap().WithZone(""), r.raw[i], fields, true
 	}
-	return netip.Addr{}, "", false
+	return netip.Addr{}, "", nil, false
 }
 
 // Hit records one matching line; once the threshold is reached it returns the

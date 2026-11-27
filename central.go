@@ -143,6 +143,48 @@ type Heartbeat struct {
 	Rules      []string  `json:"rules"`
 	ActiveBans int       `json:"active_bans"`
 	StartedAt  time.Time `json:"started_at"`
+	// Matching lines per rule since the last heartbeat that got through
+	// (ignored IPs left out, except on report rules).
+	Matches map[string]int64 `json:"matches"`
+}
+
+// Event is one match of a report rule: something worth knowing, not a ban.
+type Event struct {
+	Rule    string
+	Pattern string
+	IP      netip.Addr
+	Fields  map[string]string // the pattern's other named groups
+	Line    string
+	Ignored bool // the IP is on an ignore list
+	At      time.Time
+}
+
+// errNotFound: a central app without the endpoint (older laravel-scanner-guard).
+var errNotFound = errors.New("central answered 404 Not Found")
+
+// Event sends e to <url>/events. One attempt: the same event is sent again
+// once eventEvery has passed.
+func (c *Central) Event(ctx context.Context, e Event) error {
+	fields := e.Fields
+	if fields == nil {
+		fields = map[string]string{} // always a JSON object
+	}
+	body, err := json.Marshal(map[string]any{
+		"source":  c.source,
+		"rule":    e.Rule,
+		"ip":      e.IP.String(),
+		"pattern": truncate(e.Pattern, 255),
+		"fields":  fields,
+		// The line with the IP taken out, as the ban evidence: the IP has its own field.
+		"line":    redact([]string{truncate(e.Line, maxEvidenceLine)}, e.IP)[0],
+		"ignored": e.Ignored,
+		"at":      e.At.Format(time.RFC3339),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = c.post(ctx, strings.TrimRight(c.url, "/")+"/events", body)
+	return err
 }
 
 // Heartbeat tells the central app this agent is alive, at <url>/heartbeat.
@@ -154,6 +196,7 @@ func (c *Central) Heartbeat(ctx context.Context, h Heartbeat) error {
 		"rules":       h.Rules,
 		"active_bans": h.ActiveBans,
 		"started_at":  h.StartedAt.Format(time.RFC3339),
+		"matches":     h.Matches,
 	})
 	if err != nil {
 		return err
@@ -183,6 +226,9 @@ func (c *Central) post(ctx context.Context, url string, body []byte) (retry bool
 
 	if resp.StatusCode/100 == 2 {
 		return false, nil
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return false, errNotFound
 	}
 	// 403 bad secret/clock, 422 invalid payload: resending won't help.
 	return resp.StatusCode >= 500, fmt.Errorf("central answered %s", resp.Status)
