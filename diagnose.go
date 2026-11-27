@@ -35,14 +35,19 @@ func diagnoseCmd(args []string) {
 	if err != nil {
 		log.Fatalf("%q is not an IP address", fs.Arg(0))
 	}
-	d := &diagnosis{w: os.Stdout, ip: a.Unmap().WithZone(""), run: execOut, packets: -1}
-	d.agent(*path)
+	diagnose(os.Stdout, a, *path, *since, *capture, execOut)
+}
+
+// diagnose writes the whole report on ip, from the command or for the central app.
+func diagnose(w io.Writer, ip netip.Addr, configPath, since string, capture time.Duration, run func(time.Duration, string, ...string) (string, error)) {
+	d := &diagnosis{w: w, ip: ip.Unmap().WithZone(""), run: run, packets: -1}
+	d.agent(configPath)
 	d.firewalls()
-	d.web(*path)
-	d.logs(*since)
+	d.web(configPath)
+	d.logs(since)
 	d.network()
-	if *capture > 0 {
-		d.capture(*capture)
+	if capture > 0 {
+		d.capture(capture)
 	}
 	d.verdict()
 }

@@ -70,6 +70,16 @@ type Denylist struct {
 	// Threshold, window and ban steps per rule name. nil: a central app without
 	// the feature (keep the last ones); empty: agent.yaml's for every rule.
 	AgentRules *map[string]RuleSettings `json:"agent_rules"`
+	// Optional nginx rules to turn on, by name. nil: keep the last ones.
+	NginxRules *[]string `json:"nginx_rules"`
+	// Diagnoses to run (diagnose IP) and send back to <url>/diagnostics.
+	Diagnostics []DiagnosisRequest `json:"diagnostics"`
+}
+
+type DiagnosisRequest struct {
+	ID      int64  `json:"id"`
+	IP      string `json:"ip"`
+	Capture int    `json:"capture"` // seconds of tcpdump, 0 = none
 }
 
 // sign matches ScannerGuard::sign(): hash_hmac('sha256', timestamp.body, secret).
@@ -202,6 +212,17 @@ func (c *Central) Heartbeat(ctx context.Context, h Heartbeat) error {
 		return err
 	}
 	_, err = c.post(ctx, strings.TrimRight(c.url, "/")+"/heartbeat", body)
+	return err
+}
+
+// Diagnosis sends the report of a diagnosis the central app asked for, at
+// <url>/diagnostics.
+func (c *Central) Diagnosis(ctx context.Context, id int64, report string) error {
+	body, err := json.Marshal(map[string]any{"source": c.source, "id": id, "report": report})
+	if err != nil {
+		return err
+	}
+	_, err = c.post(ctx, strings.TrimRight(c.url, "/")+"/diagnostics", body)
 	return err
 }
 

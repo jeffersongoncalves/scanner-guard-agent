@@ -399,6 +399,11 @@ func nginxEnable(dir string, sites []string, out io.Writer, ops nginxOps) error 
 	fmt.Fprintln(out)
 	for _, s := range sites {
 		t := pickTarget(matches[s])
+		if s == "_" {
+			// The catch-all often refuses TLS to unknown names (ssl_reject_handshake).
+			// ponytail: assumes it listens on 80, as default servers do.
+			t = probeTarget{host: "127.0.0.1", port: "80"}
+		}
 		attack, aerr := ops.probe(s, t, "/?id=1+union+select+1")
 		normal, nerr := ops.probe(s, t, "/")
 		fmt.Fprintf(out, "%s (%s)\n", s, t)

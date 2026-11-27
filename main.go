@@ -81,7 +81,8 @@ Usage:
                                                                    ready-made monitors (ssh-logins), on or off
 
   scanner-guard-agent nginx-init    [-dir DIR] [-proxy cloudflare,CIDR,...]
-  scanner-guard-agent nginx-test    [-dir DIR] ACCESSLOG|-        what the 403 rules would block in a log
+  scanner-guard-agent nginx-test    [-dir DIR] [-with cms,...] ACCESSLOG|-
+                                                                   what the 403 rules would block in a log (-with: plus optional rules)
   scanner-guard-agent nginx-sites   [-dir DIR]                     every site, 403 on or off
   scanner-guard-agent nginx-enable  [-dir DIR] SITE...             403 on (tested, reverted if nginx -t fails)
   scanner-guard-agent nginx-disable [-dir DIR] SITE...             403 off

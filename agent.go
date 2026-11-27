@@ -29,6 +29,17 @@ type Agent struct {
 
 	eventsOff atomic.Bool    // the central app has no /events: stop sending
 	reports   sync.WaitGroup // in-flight central reports; one-shot commands wait on it
+
+	// Optional nginx rules from the central app (nginxrules.go).
+	nginxRules    *string // the last set handled, nil before the first
+	nginxDir      string
+	nginxOptional string
+	nginx         nginxOps
+
+	// Diagnoses the central app asked for (remote.go).
+	diagnoses map[int64]bool                                         // running or done, by id
+	diagnose  sync.Mutex                                             // one at a time
+	exec      func(time.Duration, string, ...string) (string, error) // runs the diagnosis commands
 }
 
 // An event (same rule, IP and fields) is sent at most once per eventEvery: a
@@ -39,7 +50,10 @@ const (
 )
 
 func newAgent(cfg *Config, fw Firewall, st *state) *Agent {
-	a := &Agent{cfg: cfg, fw: fw, state: st, statePath: cfg.StateFile, started: time.Now(), events: map[string]time.Time{}}
+	a := &Agent{
+		cfg: cfg, fw: fw, state: st, statePath: cfg.StateFile, started: time.Now(), events: map[string]time.Time{},
+		nginxDir: defaultNginxDir, nginxOptional: nginxOptionalDir, nginx: systemNginx, diagnoses: map[int64]bool{}, exec: execOut,
+	}
 	if cfg.Central.URL != "" {
 		a.central = &Central{
 			url:    cfg.Central.URL,
@@ -290,6 +304,12 @@ func (a *Agent) pull(ctx context.Context) *Denylist {
 	}
 	if dl.AgentRules != nil {
 		a.setRuleSettings(*dl.AgentRules)
+	}
+	if dl.NginxRules != nil {
+		a.setNginxRules(*dl.NginxRules)
+	}
+	for _, r := range dl.Diagnostics {
+		a.startDiagnosis(ctx, r)
 	}
 	return dl
 }

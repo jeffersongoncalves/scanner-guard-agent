@@ -10,12 +10,14 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"maps"
 	"net/netip"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,7 +64,7 @@ func nginxInitCmd(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := nginxInit(*dir, proxies, os.Stdout); err != nil {
+	if err := nginxInit(*dir, proxies, os.Stdout, systemNginx); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -135,9 +137,30 @@ func nginxWriteRules(dir string, proxies []netip.Prefix, out io.Writer) error {
 	return nil
 }
 
-func nginxInit(dir string, proxies []netip.Prefix, out io.Writer) error {
+func nginxInit(dir string, proxies []netip.Prefix, out io.Writer, ops nginxOps) error {
 	if err := nginxWriteRules(dir, proxies, out); err != nil {
 		return err
+	}
+
+	// A rules file from before 2.8.0: let in the optional rules of the central app.
+	p := filepath.Join(dir, nginxRulesFile)
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	conf, changed, err := withOptionalIncludes(string(raw))
+	if err != nil {
+		fmt.Fprintf(out, "note: %v\n", err) // the rest of the setup still stands
+	}
+	if changed {
+		c, err := readChange(p, []byte(conf))
+		if err != nil {
+			return err
+		}
+		if err := applyAndReload([]fileChange{c}, ops); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "updated %s: includes the optional rules turned on from the central app (nginx reloaded)\n", p)
 	}
 
 	fmt.Fprintf(out, `
@@ -184,6 +207,7 @@ func writeNew(p string, content []byte) error {
 func nginxTestCmd(args []string) {
 	flags := flag.NewFlagSet("nginx-test", flag.ExitOnError)
 	dir := flags.String("dir", defaultNginxDir, "nginx config directory")
+	with := flags.String("with", "", "also the optional rules, comma-separated ("+strings.Join(slices.Sorted(maps.Keys(optionalRules)), ", ")+"), to check one before turning it on")
 	_ = flags.Parse(args)
 
 	if flags.NArg() != 1 {
@@ -196,9 +220,12 @@ func nginxTestCmd(args []string) {
 	if err != nil {
 		log.Fatalf("%v (run nginx-init first)", err)
 	}
-	maps, err := parseNginxMaps(string(raw))
+	rules, err := parseNginxMaps(string(raw))
 	if err != nil {
 		log.Fatalf("%s:%v", conf, err)
+	}
+	if err := addOptional(rules, *with); err != nil {
+		log.Fatal(err)
 	}
 
 	var in io.Reader = os.Stdin
@@ -210,9 +237,29 @@ func nginxTestCmd(args []string) {
 		defer f.Close()
 		in = f
 	}
-	if err := nginxTest(maps, in, os.Stdout); err != nil {
+	if err := nginxTest(rules, in, os.Stdout); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// addOptional appends the named optional rules to their maps, as nginx would
+// with them turned on (after the map's own rules).
+func addOptional(rules map[string]nginxMap, names string) error {
+	for n := range strings.SplitSeq(names, ",") {
+		if n = strings.TrimSpace(n); n == "" {
+			continue
+		}
+		r, ok := optionalRules[n]
+		if !ok {
+			return fmt.Errorf("-with: no optional rule %q", n)
+		}
+		m := rules[optionalMaps[r.file]]
+		if err := m.add(r.line); err != nil {
+			return err
+		}
+		rules[optionalMaps[r.file]] = m
+	}
+	return nil
 }
 
 // nginxMap is the subset of an nginx map block the shipped config uses.
@@ -273,26 +320,26 @@ func parseNginxMaps(conf string) (map[string]nginxMap, error) {
 			maps[name], name = cur, ""
 			continue
 		}
-		m := nginxMapEntRe.FindStringSubmatch(line)
-		if m == nil || m[1] == "include" {
-			return nil, fmt.Errorf("%d: not supported by nginx-test: %s", i+1, line)
+		// An absolute include (the optional rules): its lines, as nginx reads them.
+		if inc, ok := strings.CutPrefix(line, "include "); ok && strings.HasSuffix(inc, ";") && (path.IsAbs(inc) || filepath.IsAbs(inc)) {
+			files, _ := filepath.Glob(strings.TrimSpace(strings.TrimSuffix(inc, ";")))
+			for _, f := range files {
+				raw, err := os.ReadFile(f)
+				if err != nil {
+					return nil, fmt.Errorf("%d: %w", i+1, err)
+				}
+				for l := range strings.SplitSeq(string(raw), "\n") {
+					if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
+						if err := cur.add(l); err != nil {
+							return nil, fmt.Errorf("%d: %s: %w", i+1, f, err)
+						}
+					}
+				}
+			}
+			continue
 		}
-		key, value := nginxToken(m[1]), nginxToken(m[2])
-		expr, isRegex := strings.CutPrefix(key, "~")
-		switch {
-		case key == "default":
-			cur.def = value
-		case isRegex:
-			if e, ok := strings.CutPrefix(expr, "*"); ok {
-				expr = "(?i)" + e
-			}
-			re, err := regexp.Compile(expr)
-			if err != nil {
-				return nil, fmt.Errorf("%d: nginx-test can't run this rule: %w", i+1, err)
-			}
-			cur.entries = append(cur.entries, nginxMapEntry{re: re, value: value})
-		default:
-			cur.entries = append(cur.entries, nginxMapEntry{literal: key, value: value})
+		if err := cur.add(line); err != nil {
+			return nil, fmt.Errorf("%d: %w", i+1, err)
 		}
 	}
 	if name != "" {
@@ -302,6 +349,32 @@ func parseNginxMaps(conf string) (map[string]nginxMap, error) {
 		return nil, errors.New("no rules in the maps $sg_uri, $sg_path and $sg_agent")
 	}
 	return maps, nil
+}
+
+// add parses one map line ("~*regex" value;) into m.
+func (m *nginxMap) add(line string) error {
+	e := nginxMapEntRe.FindStringSubmatch(line)
+	if e == nil || e[1] == "include" {
+		return fmt.Errorf("not supported by nginx-test: %s", line)
+	}
+	key, value := nginxToken(e[1]), nginxToken(e[2])
+	expr, isRegex := strings.CutPrefix(key, "~")
+	switch {
+	case key == "default":
+		m.def = value
+	case isRegex:
+		if x, ok := strings.CutPrefix(expr, "*"); ok {
+			expr = "(?i)" + x
+		}
+		re, err := regexp.Compile(expr)
+		if err != nil {
+			return fmt.Errorf("nginx-test can't run this rule: %w", err)
+		}
+		m.entries = append(m.entries, nginxMapEntry{re: re, value: value})
+	default:
+		m.entries = append(m.entries, nginxMapEntry{literal: key, value: value})
+	}
+	return nil
 }
 
 func nginxToken(s string) string {
