@@ -2,6 +2,13 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.8.1 - 2026-11-27
+
+### Changelog
+
+* d30c909441d0ac0655f21fe251a7111f4575e219: Update CHANGELOG (@github-actions[bot])
+* 5fb754f2640bcc75634cb2eb6ff65ad98bdd29d6: fix: run nginx -t outside the service sandbox (#26) (@jeffersongoncalves)
+
 ## 2.8.0 - 2026-11-27
 
 ### Changelog
@@ -81,6 +88,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
   
   
   
+  
   ```
 
 ### Fixed
@@ -92,6 +100,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.2.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
@@ -141,6 +150,7 @@ No config change.
 sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
