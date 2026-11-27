@@ -41,6 +41,8 @@ func main() {
 		statusCmd(os.Args[2:])
 	case "ip":
 		ipCmd(os.Args[2:])
+	case "diagnose":
+		diagnoseCmd(os.Args[2:])
 	case "nginx-init":
 		nginxInitCmd(os.Args[2:])
 	case "nginx-test":
@@ -68,6 +70,8 @@ Usage:
   scanner-guard-agent run    [-config FILE]
   scanner-guard-agent status [-config FILE] [-n 10]               what is blocked, the rules, the last bans
   scanner-guard-agent ip     [-config FILE] IP...                  why an IP is blocked, or not
+  scanner-guard-agent diagnose [-config FILE] [-since 24h] [-capture 60s] IP
+                                                                   a client cannot connect: every firewall, the logs, the route, a verdict
   scanner-guard-agent replay [-config FILE] [-since 7d] [-rule NAME] [-ban]
                                                                    the rules over the past logs: who would be banned (-ban: ban them)
   scanner-guard-agent test   [-config FILE] [-rule NAME] [-ban] LOGFILE|-

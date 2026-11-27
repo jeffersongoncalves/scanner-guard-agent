@@ -389,6 +389,27 @@ A ban that also came from the central app is re-added on the next pull. Unban it
 `nft delete` doesn't touch the nginx/Apache denylists. To lift a local ban from those too, add the IP
 to `ignore` and restart the agent.
 
+### A client cannot connect
+
+```bash
+sudo scanner-guard-agent diagnose 203.0.113.7               # read-only
+sudo scanner-guard-agent diagnose -capture 60s 203.0.113.7  # also watch its packets while the client tries
+```
+
+`diagnose` looks for the IP everywhere a server can drop it, not only in the agent: the agent's own
+table, the rest of the nftables ruleset, iptables (`-save`, legacy too), ipset, fail2ban jails,
+`hosts.deny`/csf/apf, the agent's nginx/Apache denylists and the nginx 403 rules' log. Then it
+checks whether the IP's traffic shows up at all (current nginx/Apache access logs, journald for
+`-since`, default `24h`), the route, `ping` and `mtr`/`tracepath` from the server to the IP, and,
+with `-capture`, `tcpdump` on every interface. It ends with a verdict:
+
+- **blocked on this server by ...**: unblock it there;
+- **nothing blocks it, its packets arrive**: look at the application (TLS, the site's own rules);
+- **nothing blocks it, no packet arrived while capturing**: the traffic stops before the server
+  (client network, ISP, the datacenter's firewall or DDoS protection).
+
+An ACCEPT rule mentioning the IP is listed but not counted as a block. Missing tools are skipped.
+
 ## State and restarts
 
 The agent keeps its escalation steps and the local bans still running in `state_file` (default
