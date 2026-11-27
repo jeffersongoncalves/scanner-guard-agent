@@ -49,6 +49,9 @@ type RuleConfig struct {
 	Threshold int        `yaml:"threshold"`
 	Window    Duration   `yaml:"window"`
 	Ban       []Duration `yaml:"ban"`
+	// Report sends each match to the central app as an event (an accepted SSH
+	// login, say) instead of counting it toward a ban.
+	Report bool `yaml:"report"`
 }
 
 // Duration accepts Go durations plus a "d" (days) suffix: 90s, 10m, 1d.

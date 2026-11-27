@@ -81,6 +81,10 @@ func writeStatus(w io.Writer, cfg *Config, st *state, service string, sets map[s
 		if src == "" {
 			src = "journald " + strings.Join(r.journald, ",")
 		}
+		if r.report {
+			fmt.Fprintf(w, "  %-16s report only (events to the central app)  <- %s\n", r.Name, src)
+			continue
+		}
 		l, from := r.limits(), ""
 		if l.central {
 			from = " (central app)"

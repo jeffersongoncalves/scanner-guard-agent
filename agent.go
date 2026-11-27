@@ -3,11 +3,15 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"maps"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,12 +25,21 @@ type Agent struct {
 	state     *state
 	statePath string                     // "" = don't persist (tests)
 	pulled    map[netip.Prefix]time.Time // valid entries of the last pull (zero = static), nil before the first pull
+	events    map[string]time.Time       // event key -> when it was last sent (see eventEvery)
 
-	reports sync.WaitGroup // in-flight central reports; one-shot commands wait on it
+	eventsOff atomic.Bool    // the central app has no /events: stop sending
+	reports   sync.WaitGroup // in-flight central reports; one-shot commands wait on it
 }
 
+// An event (same rule, IP and fields) is sent at most once per eventEvery: a
+// login repeated every minute is one event a day, not 1440.
+const (
+	eventEvery = 24 * time.Hour
+	maxEvents  = 10000 // remembered event keys
+)
+
 func newAgent(cfg *Config, fw Firewall, st *state) *Agent {
-	a := &Agent{cfg: cfg, fw: fw, state: st, statePath: cfg.StateFile, started: time.Now()}
+	a := &Agent{cfg: cfg, fw: fw, state: st, statePath: cfg.StateFile, started: time.Now(), events: map[string]time.Time{}}
 	if cfg.Central.URL != "" {
 		a.central = &Central{
 			url:    cfg.Central.URL,
@@ -109,11 +122,19 @@ func (a *Agent) watch(ctx context.Context, r *Rule) {
 		case now := <-prune.C:
 			r.Prune(now)
 		case line := <-lines:
-			ip, pattern, ok := r.Match(line)
-			if !ok || a.ignored(hostPrefix(ip)) {
+			ip, pattern, fields, ok := r.matchFields(line)
+			if !ok {
 				continue
 			}
 			now := time.Now()
+			if r.report {
+				a.event(ctx, Event{Rule: r.Name, Pattern: pattern, IP: ip, Fields: fields, Line: line, At: now})
+				continue
+			}
+			if a.ignored(hostPrefix(ip)) {
+				continue
+			}
+			r.matched.Add(1)
 			if hits, evidence, trip := r.Hit(ip, now, line); trip {
 				if b, ok := a.decide(r, ip, pattern, hits, now); ok {
 					b.Evidence = evidence
@@ -196,6 +217,67 @@ func (a *Agent) enforce(ctx context.Context, b Ban) error {
 	return err
 }
 
+// event logs and sends a report rule's match, unless the same one (rule, IP,
+// fields) went out less than eventEvery ago. Ignored IPs are sent too, marked:
+// a new key logging in from the office is still news.
+func (a *Agent) event(ctx context.Context, e Event) {
+	a.mu.Lock()
+	for _, r := range a.cfg.rules {
+		if r.Name == e.Rule {
+			r.matched.Add(1)
+		}
+	}
+	key := eventKey(e)
+	if last, ok := a.events[key]; ok && e.At.Sub(last) < eventEvery {
+		a.mu.Unlock()
+		return
+	}
+	if len(a.events) >= maxEvents {
+		for k, at := range a.events {
+			if e.At.Sub(at) >= eventEvery {
+				delete(a.events, k)
+			}
+		}
+		if len(a.events) >= maxEvents {
+			// ponytail: a flood of distinct events forgets them all; an LRU if that ever matters.
+			clear(a.events)
+		}
+	}
+	a.events[key] = e.At
+	e.Ignored = a.ignoredLocked(hostPrefix(e.IP))
+	a.mu.Unlock()
+
+	log.Printf("event rule=%s ip=%s%s", e.Rule, e.IP, fieldsText(e.Fields))
+	if a.central == nil || a.eventsOff.Load() {
+		return
+	}
+	a.reports.Go(func() {
+		err := a.central.Event(ctx, e)
+		switch {
+		case errors.Is(err, errNotFound):
+			if a.eventsOff.CompareAndSwap(false, true) {
+				log.Print("the central app has no /events (update laravel-scanner-guard): events stay in this log only")
+			}
+		case err != nil:
+			log.Printf("event %s to central: %v", e.Rule, err)
+		}
+	})
+}
+
+// eventKey identifies an event for deduplication: rule, IP and fields.
+func eventKey(e Event) string {
+	return e.Rule + "\x00" + e.IP.String() + fieldsText(e.Fields)
+}
+
+// fieldsText prints fields sorted by name: " key=SHA256:abc user=deploy".
+func fieldsText(f map[string]string) string {
+	var b strings.Builder
+	for _, k := range slices.Sorted(maps.Keys(f)) {
+		fmt.Fprintf(&b, " %s=%s", k, f[k])
+	}
+	return b.String()
+}
+
 // pull fetches the denylist and puts its ignore list in place. nil: it failed.
 func (a *Agent) pull(ctx context.Context) *Denylist {
 	dl, err := a.central.Pull(ctx)
@@ -236,6 +318,9 @@ func (a *Agent) setRuleSettings(m map[string]RuleSettings) {
 // agent has no rule for are skipped.
 func applyRuleSettings(rules []*Rule, m map[string]RuleSettings, logf func(string, ...any)) {
 	for _, r := range rules {
+		if r.report {
+			continue // nothing to set: it never bans
+		}
 		before := r.limits()
 		s, ok := m[r.Name]
 		switch {
@@ -263,7 +348,9 @@ func (a *Agent) centralLoop(ctx context.Context, dl *Denylist) {
 		if dl != nil {
 			a.setPulled(a.apply(dl, applied, time.Now()))
 		}
-		if err := a.central.Heartbeat(ctx, a.heartbeat()); err != nil {
+		hb := a.heartbeat()
+		if err := a.central.Heartbeat(ctx, hb); err != nil {
+			a.unsend(hb) // its matches go in the next one
 			log.Printf("heartbeat: %v", err)
 		}
 		if !sleep(ctx, time.Duration(a.cfg.Central.PullInterval)) {
@@ -337,16 +424,26 @@ func (a *Agent) ignoredLocked(p netip.Prefix) bool {
 	return a.cfg.ignored(p) || slices.ContainsFunc(a.state.Ignore, p.Overlaps)
 }
 
+// heartbeat takes the match counters (zeroed: unsend puts them back if the
+// heartbeat doesn't get through).
 func (a *Agent) heartbeat() Heartbeat {
 	rules := make([]string, 0, len(a.cfg.rules))
+	matches := make(map[string]int64, len(a.cfg.rules))
 	for _, r := range a.cfg.rules {
 		rules = append(rules, r.Name)
+		matches[r.Name] = r.matched.Swap(0)
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	// Everything the firewall blocks: this server's bans plus the pulled ones.
-	return Heartbeat{Version: version, Rules: rules, ActiveBans: len(a.blockedLocked(time.Now())), StartedAt: a.started}
+	return Heartbeat{Version: version, Rules: rules, ActiveBans: len(a.blockedLocked(time.Now())), StartedAt: a.started, Matches: matches}
+}
+
+func (a *Agent) unsend(h Heartbeat) {
+	for _, r := range a.cfg.rules {
+		r.matched.Add(h.Matches[r.Name])
+	}
 }
 
 // apply brings the firewall in line with the pulled denylist: adds new or
