@@ -2,6 +2,13 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.6.0 - 2026-11-26
+
+### Changelog
+
+* d6643a6fc59aa9db7de65752f1256322de1e43c5: Update CHANGELOG (@github-actions[bot])
+* 54c395785fe7a8485ea2b97ba1740a893a9b0364: feat: add report rules (events to the central app) and per-rule match counts in the heartbeat (#22) (@jeffersongoncalves)
+
 ## 2.5.0 - 2026-11-26
 
 ### Changelog
@@ -56,6 +63,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
   
   
   
+  
   ```
 
 ### Fixed
@@ -67,6 +75,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.2.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
@@ -113,6 +122,7 @@ No config change.
 sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
