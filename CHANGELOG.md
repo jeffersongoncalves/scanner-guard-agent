@@ -2,6 +2,14 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.7.0 - 2026-11-27
+
+### Changelog
+
+* 8b9438fef13618d90215939f0fdc8c56fbf081e2: Update CHANGELOG (@github-actions[bot])
+* 01c94dba3850d7d486c842afe14ce3d0b57660ec: feat: add the diagnose command for clients that cannot connect (#24) (@jeffersongoncalves)
+* 08e1b83f0cae1e18e7a2ef8ca6c5614b176cdff1: feat: add the monitor command and rules.d drop-in rules (#23) (@jeffersongoncalves)
+
 ## 2.6.0 - 2026-11-26
 
 ### Changelog
@@ -64,6 +72,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
   
   
   
+  
   ```
 
 ### Fixed
@@ -75,6 +84,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.2.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
@@ -122,6 +132,7 @@ No config change.
 sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
