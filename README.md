@@ -170,6 +170,10 @@ key keeps the last settings, which the state file holds across restarts. An IP k
 count when the steps change: its next ban takes the new step for that count. `status` marks the
 rules set by the central app, and `replay` counts with the same values as the running agent.
 
+Two more keys, from `laravel-scanner-guard` 2.8.0: `nginx_rules`, the [optional nginx
+rules](#optional-rules) to turn on (`["cms"]`; absent: keep the last ones), and `diagnostics`, the
+[diagnoses](#a-client-cannot-connect) to run (`[{"id": 7, "ip": "203.0.113.7", "capture": 60}]`).
+
 After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
 `version`, `rules`, `active_bans`, `started_at`, `matches`). `active_bans` counts everything the firewall
 blocks: this server's bans plus the pulled ones (before 2.3.0: only its own). `matches` counts the
@@ -312,7 +316,7 @@ Behind a proxy or CDN, also pass `-proxy`, with `cloudflare`, IPs or CIDRs (the 
 | `dotfile`, `backup`, `config`, `probe` | `.env`, `.git`, `dump.sql`, `config.php.bak`, `composer.lock`, web shells |
 | `upload-php` | PHP inside `uploads`, `tmp`, `temp` or `cache` |
 | `scanner`, `shellshock` | User-Agents: sqlmap, nikto, nuclei, ... |
-| `encoded`, `rfi`, `cms`, `empty-agent` | stricter, commented out |
+| `encoded`, `rfi`, `cms`, `empty-agent` | stricter, off: see [Optional rules](#optional-rules) |
 
 Run `nginx-test` on a few days of logs. On a false positive, add the path to the exceptions or comment
 the rule out, and test again. Then turn the rules on per site, by `server_name`:
@@ -336,6 +340,28 @@ before the block's own `if`/`rewrite`/`return`:
 include scanner-guard/server.conf;
 include scanner-guard/login.conf;   # optional
 ```
+
+The catch-all (the `default_server` answering an unknown host or the bare IP, usually with `return
+444`) is a site like the others: `nginx-enable _`. Scanners probing the IP then get the `403` and go to
+the log when a rule matches; every other request keeps its `444` and stays out of it. Don't point an
+`access_log` of the catch-all at `scanner-guard.log` by hand: every request would count as an attack.
+
+### Optional rules
+
+`cms`, `rfi`, `encoded` and `empty-agent` block more, with more false positives, so they ship off.
+Check one against your logs first:
+
+```bash
+sudo scanner-guard-agent nginx-test -with cms /var/log/nginx/access.log
+```
+
+Then turn it on for every server from the central app (`nginx_rules` in the pull, a page in
+`filament-scanner-guard`, with exceptions per server). The central app only sends names: the rules
+ship with the agent, which writes the ones turned on to `/var/lib/scanner-guard/nginx/{uri,path,agent}.conf`,
+runs `nginx -t` and reloads, or puts the previous files back. The maps of `scanner-guard-rules.conf`
+include those files; on a rules file written before 2.8.0, run `nginx-init` once to add the includes
+(tested, reverted if `nginx -t` fails). Don't also uncomment the rule in `scanner-guard-rules.conf`: it
+would be listed twice. Without a central app, uncomment it there instead.
 
 What the rules blocked, per rule, client and site (the last 24 hours by default):
 
@@ -384,8 +410,9 @@ This is a filter for common probes, not a WAF, and it doesn't fix a vulnerable a
 - To undo: `nginx-disable` every site (or remove the `include` lines), delete the files, reload nginx.
   Remove the agent rules and restart the agent.
 - `nginx-test` reads the request line and User-Agent of the combined format, also with the site in front
-  (`$server_name $remote_addr - ...`), told apart by where the `-` falls. It fails on rules it can't
-  run (`include`, lookaheads) instead of skipping them, and doesn't cover the login limit.
+  (`$server_name $remote_addr - ...`), told apart by where the `-` falls. It reads the optional rules
+  through their absolute `include`, fails on rules it can't run (another `include`, lookaheads) instead
+  of skipping them, and doesn't cover the login limit.
 
 ## Manage bans
 
@@ -422,6 +449,13 @@ with `-capture`, `tcpdump` on every interface. It ends with a verdict:
   (client network, ISP, the datacenter's firewall or DDoS protection).
 
 An ACCEPT rule mentioning the IP is listed but not counted as a block. Missing tools are skipped.
+
+The central app can ask for the same report on one server or all of them (`diagnostics` in the pull,
+a panel action in `filament-scanner-guard`): within a pull interval each agent runs `diagnose` on the
+IP, with a `tcpdump` capture of up to 120s if asked, and POSTs the report, signed, to
+`<central.url>/diagnostics`. One diagnosis runs at a time. The central app only sends an IP and a
+capture length, never a command. To refuse them on a server, set `central.diagnose: false`: the agent
+then answers each request with that.
 
 ## State and restarts
 

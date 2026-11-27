@@ -207,7 +207,7 @@ func TestLogClient(t *testing.T) {
 
 func TestNginxInit(t *testing.T) {
 	dir := t.TempDir()
-	if err := nginxInit(dir, nil, &bytes.Buffer{}); err == nil {
+	if err := nginxInit(dir, nil, &bytes.Buffer{}, (&fakeNginx{}).ops()); err == nil {
 		t.Fatal("accepted a directory without conf.d")
 	}
 	if err := os.Mkdir(filepath.Join(dir, "conf.d"), 0o755); err != nil {
@@ -215,7 +215,7 @@ func TestNginxInit(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := nginxInit(dir, nil, &out); err != nil {
+	if err := nginxInit(dir, nil, &out, (&fakeNginx{}).ops()); err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(out.String(), "created "); n != 3 {
@@ -230,7 +230,7 @@ func TestNginxInit(t *testing.T) {
 	if err := os.Remove(server); err != nil {
 		t.Fatal(err)
 	}
-	if err := nginxInit(dir, nil, &bytes.Buffer{}); err != nil {
+	if err := nginxInit(dir, nil, &bytes.Buffer{}, (&fakeNginx{}).ops()); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(rules); string(got) != "mine" {
@@ -281,7 +281,7 @@ func TestNginxProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := nginxInit(dir, proxies, &out); err != nil {
+	if err := nginxInit(dir, proxies, &out, (&fakeNginx{}).ops()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "172.18.0.0/16, 10.0.0.5]") {

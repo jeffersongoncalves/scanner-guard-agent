@@ -31,6 +31,7 @@ type Config struct {
 	rules  []*Rule
 	ignore []netip.Prefix
 	secret string
+	path   string // the file it was loaded from
 }
 
 type CentralConfig struct {
@@ -40,6 +41,9 @@ type CentralConfig struct {
 	Timeout      Duration `yaml:"timeout"`
 
 	RequireSigned bool `yaml:"require_signed_response"`
+	// Run the diagnoses the central app asks for (read-only, see diagnose).
+	// nil: on.
+	Diagnose *bool `yaml:"diagnose"`
 }
 
 type RuleConfig struct {
@@ -87,7 +91,7 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	cfg := &Config{}
+	cfg := &Config{path: path}
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true) // a typo'd key is an error, not a silently ignored rule
 	if err := dec.Decode(cfg); err != nil {
