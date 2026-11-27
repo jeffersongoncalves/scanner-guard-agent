@@ -17,6 +17,13 @@ type state struct {
 	Banned   map[netip.Addr]time.Time          `json:"banned"`           // IP -> expiry
 	Ignore   []netip.Prefix                    `json:"ignore,omitempty"` // the central app's, on top of the config's
 	Rules    map[string]RuleSettings           `json:"rules,omitempty"`  // the central app's agent_rules
+	Nginx    *nginxApplied                     `json:"nginx,omitempty"`  // the last optional nginx rules handled, for status
+}
+
+type nginxApplied struct {
+	Rules []string  `json:"rules"`
+	Error string    `json:"error,omitempty"`
+	At    time.Time `json:"at"`
 }
 
 type offense struct {

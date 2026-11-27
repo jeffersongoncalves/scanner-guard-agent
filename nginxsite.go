@@ -210,7 +210,15 @@ type nginxOps struct {
 
 var systemNginx = nginxOps{
 	test: func() (string, error) {
-		out, err := exec.Command("nginx", "-t").CombinedOutput()
+		cmd := exec.Command("nginx", "-t")
+		// Inside the agent's systemd service (nginx rules from the central app),
+		// the sandbox can't open nginx's logs for writing, as nginx -t does:
+		// ProtectSystem and no CAP_DAC_OVERRIDE. Test from a transient unit
+		// instead, the way the reload below also goes through systemd.
+		if os.Getenv("INVOCATION_ID") != "" {
+			cmd = exec.Command("systemd-run", "--quiet", "--wait", "--pipe", "--collect", "nginx", "-t")
+		}
+		out, err := cmd.CombinedOutput()
 		return string(out), err
 	},
 	reload: func() error {
@@ -408,6 +416,10 @@ func nginxEnable(dir string, sites []string, out io.Writer, ops nginxOps) error 
 		normal, nerr := ops.probe(s, t, "/")
 		fmt.Fprintf(out, "%s (%s)\n", s, t)
 		fmt.Fprintf(out, "  attack: %s\n", verdict(attack, aerr, attack == 403, "want 403"))
+		if s == "_" && errors.Is(nerr, io.EOF) {
+			fmt.Fprintln(out, "  normal: closed without an answer (444) ok")
+			continue
+		}
 		fmt.Fprintf(out, "  normal: %s\n", verdict(normal, nerr, normal != 403 && normal < 500, "was it like this before? undo: scanner-guard-agent nginx-disable "+s))
 	}
 	return nil
