@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +94,25 @@ func loadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 
+	// rules.d/*.yaml next to the config adds rules (scanner-guard-agent monitor
+	// writes them there), so the main file is never rewritten.
+	extra, _ := filepath.Glob(filepath.Join(rulesDir(path), "*.yaml"))
+	for _, f := range extra {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		var part struct {
+			Rules []RuleConfig `yaml:"rules"`
+		}
+		dec := yaml.NewDecoder(bytes.NewReader(raw))
+		dec.KnownFields(true)
+		if err := dec.Decode(&part); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		cfg.Rules = append(cfg.Rules, part.Rules...)
+	}
+
 	if cfg.Source == "" {
 		cfg.Source, _ = os.Hostname()
 	}
@@ -163,6 +183,10 @@ func loadConfig(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func rulesDir(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "rules.d")
 }
 
 // ignored reports whether p overlaps any ignored address or range.
