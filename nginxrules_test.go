@@ -161,6 +161,17 @@ func TestSetNginxRules(t *testing.T) {
 	}
 }
 
+func TestSetNginxRulesWithoutNginx(t *testing.T) {
+	f := &fakeNginx{}
+	a := newAgent(&Config{}, fakeFirewall{}, newState())
+	a.nginxDir, a.nginxOptional, a.nginx = filepath.Join(t.TempDir(), "nginx"), t.TempDir(), f.ops()
+	a.state.Nginx = &nginxApplied{Rules: []string{"cms"}, Error: "no conf.d/scanner-guard-rules.conf on this server"}
+	a.setNginxRules([]string{"cms"}, time.Now())
+	if a.state.Nginx != nil || f.reloads != 0 {
+		t.Errorf("server without nginx: state %+v, reloads %d", a.state.Nginx, f.reloads)
+	}
+}
+
 func TestNginxTestWith(t *testing.T) {
 	maps := shippedMaps(t)
 	if got := nginxRule(maps, "/x?u=https://evil.example/", "x"); got != "" {
