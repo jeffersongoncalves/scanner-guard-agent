@@ -110,8 +110,9 @@ func (a *Agent) setNginxRules(names []string, now time.Time) {
 		log.Printf("dry-run: nginx rules from central (%s) are not written", key)
 		return
 	}
-	if _, err := os.Stat(a.nginxDir); errors.Is(err, fs.ErrNotExist) {
-		// No nginx on this server: nothing to apply, nothing to report.
+	if !slices.ContainsFunc(a.cfg.rules, func(r *Rule) bool { return r.file == defaultGuardLog }) {
+		// No web_attack rule (or no nginx at all): nobody would ban on the 403s,
+		// nothing to apply, nothing to report.
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if a.state.Nginx != nil { // a failure recorded by 2.8.1

@@ -93,7 +93,7 @@ func TestSetNginxRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &fakeNginx{}
-	a := newAgent(&Config{}, fakeFirewall{}, newState())
+	a := newAgent(&Config{rules: []*Rule{{Name: "web_attack", file: defaultGuardLog}}}, fakeFirewall{}, newState())
 	a.nginxDir, a.nginxOptional, a.nginx = dir, opt, f.ops()
 
 	// Not included yet (nginx-init not run): nothing written.
@@ -161,10 +161,11 @@ func TestSetNginxRules(t *testing.T) {
 	}
 }
 
-func TestSetNginxRulesWithoutNginx(t *testing.T) {
+// No web_attack rule (a server without nginx, too): nobody bans on the 403s.
+func TestSetNginxRulesWithoutWebAttack(t *testing.T) {
 	f := &fakeNginx{}
-	a := newAgent(&Config{}, fakeFirewall{}, newState())
-	a.nginxDir, a.nginxOptional, a.nginx = filepath.Join(t.TempDir(), "nginx"), t.TempDir(), f.ops()
+	a := newAgent(&Config{rules: []*Rule{{Name: "ssh_bruteforce", journald: []string{"ssh.service"}}}}, fakeFirewall{}, newState())
+	a.nginxDir, a.nginxOptional, a.nginx = t.TempDir(), t.TempDir(), f.ops()
 	a.state.Nginx = &nginxApplied{Rules: []string{"cms"}, Error: "no conf.d/scanner-guard-rules.conf on this server"}
 	a.setNginxRules([]string{"cms"}, time.Now())
 	if a.state.Nginx != nil || f.reloads != 0 {
