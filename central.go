@@ -155,7 +155,9 @@ type Heartbeat struct {
 	StartedAt  time.Time `json:"started_at"`
 	// Matching lines per rule since the last heartbeat that got through
 	// (ignored IPs left out, except on report rules).
-	Matches map[string]int64 `json:"matches"`
+	Matches   map[string]int64 `json:"matches"`
+	OS        string           `json:"os,omitempty"`
+	Addresses []string         `json:"addresses"`
 }
 
 // Event is one match of a report rule: something worth knowing, not a ban.
@@ -207,6 +209,8 @@ func (c *Central) Heartbeat(ctx context.Context, h Heartbeat) error {
 		"active_bans": h.ActiveBans,
 		"started_at":  h.StartedAt.Format(time.RFC3339),
 		"matches":     h.Matches,
+		"os":          h.OS,
+		"addresses":   h.Addresses,
 	})
 	if err != nil {
 		return err

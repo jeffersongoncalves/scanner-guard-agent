@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"net"
 	"net/netip"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -458,7 +460,34 @@ func (a *Agent) heartbeat() Heartbeat {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	// Everything the firewall blocks: this server's bans plus the pulled ones.
-	return Heartbeat{Version: version, Rules: rules, ActiveBans: len(a.blockedLocked(time.Now())), StartedAt: a.started, Matches: matches}
+	return Heartbeat{Version: version, Rules: rules, ActiveBans: len(a.blockedLocked(time.Now())), StartedAt: a.started, Matches: matches,
+		OS: osName("/etc/os-release"), Addresses: hostAddresses()}
+}
+
+// osName is PRETTY_NAME from os-release ("Ubuntu 22.04.5 LTS"), or "".
+func osName(path string) string {
+	raw, _ := os.ReadFile(path)
+	for line := range strings.Lines(string(raw)) {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "PRETTY_NAME="); ok {
+			return truncate(strings.Trim(v, `"'`), 100)
+		}
+	}
+	return ""
+}
+
+// hostAddresses lists the interface IPs, internal ones included, without
+// loopback and link-local.
+func hostAddresses() []string {
+	out := []string{}
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet)
+		if !ok || n.IP.IsLoopback() || n.IP.IsLinkLocalUnicast() {
+			continue
+		}
+		out = append(out, n.IP.String())
+	}
+	return out[:min(len(out), 32)]
 }
 
 func (a *Agent) unsend(h Heartbeat) {
