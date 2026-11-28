@@ -155,9 +155,9 @@ type Heartbeat struct {
 	StartedAt  time.Time `json:"started_at"`
 	// Matching lines per rule since the last heartbeat that got through
 	// (ignored IPs left out, except on report rules).
-	Matches map[string]int64 `json:"matches"`
-	OS        string   `json:"os,omitempty"`
-	Addresses []string `json:"addresses"`
+	Matches   map[string]int64 `json:"matches"`
+	OS        string           `json:"os,omitempty"`
+	Addresses []string         `json:"addresses"`
 }
 
 // Event is one match of a report rule: something worth knowing, not a ban.
