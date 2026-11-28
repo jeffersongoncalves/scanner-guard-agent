@@ -175,7 +175,8 @@ rules](#optional-rules) to turn on (`["cms"]`; absent: keep the last ones), and 
 [diagnoses](#a-client-cannot-connect) to run (`[{"id": 7, "ip": "203.0.113.7", "capture": 60}]`).
 
 After each pull the agent also POSTs a signed heartbeat to `<central.url>/heartbeat` (`source`,
-`version`, `rules`, `active_bans`, `started_at`, `matches`). `active_bans` counts everything the firewall
+`version`, `rules`, `active_bans`, `started_at`, `matches`, and from 2.9.0 `os`, the `PRETTY_NAME` of
+`/etc/os-release`, and `addresses`, the interface IPs without loopback). `active_bans` counts everything the firewall
 blocks: this server's bans plus the pulled ones (before 2.3.0: only its own). `matches` counts the
 matching lines per rule since the last heartbeat that got through (ignored IPs left out, except on
 report rules), so the central app can chart the attacks per server. On the central app, run the

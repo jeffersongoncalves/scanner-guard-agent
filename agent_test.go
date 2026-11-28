@@ -248,12 +248,32 @@ func TestReportPullAndHeartbeat(t *testing.T) {
 		t.Errorf("denylist = %+v", dl)
 	}
 
-	err = c.Heartbeat(context.Background(), Heartbeat{Version: "1.2.3", Rules: []string{"ssh_bruteforce"}, ActiveBans: 4, StartedAt: at})
+	err = c.Heartbeat(context.Background(), Heartbeat{Version: "1.2.3", Rules: []string{"ssh_bruteforce"}, ActiveBans: 4, StartedAt: at,
+		OS: "Ubuntu 22.04.5 LTS", Addresses: []string{"10.2.0.251"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if beat["source"] != "vps-01" || beat["version"] != "1.2.3" || beat["active_bans"] != float64(4) || beat["started_at"] != "2023-11-14T22:13:20Z" {
+	if beat["source"] != "vps-01" || beat["version"] != "1.2.3" || beat["active_bans"] != float64(4) || beat["started_at"] != "2023-11-14T22:13:20Z" ||
+		beat["os"] != "Ubuntu 22.04.5 LTS" || fmt.Sprint(beat["addresses"]) != "[10.2.0.251]" {
 		t.Errorf("heartbeat = %v", beat)
+	}
+}
+
+func TestOSName(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "os-release")
+	if err := os.WriteFile(p, []byte("NAME=\"Ubuntu\"\nPRETTY_NAME=\"Ubuntu 20.04.5 LTS\"\nID=ubuntu\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := osName(p); got != "Ubuntu 20.04.5 LTS" {
+		t.Errorf("osName = %q", got)
+	}
+	if got := osName(filepath.Join(t.TempDir(), "missing")); got != "" {
+		t.Errorf("missing file: %q", got)
+	}
+	for _, a := range hostAddresses() {
+		if ip, err := netip.ParseAddr(a); err != nil || ip.IsLoopback() {
+			t.Errorf("hostAddresses: %q", a)
+		}
 	}
 }
 
