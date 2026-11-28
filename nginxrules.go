@@ -110,6 +110,20 @@ func (a *Agent) setNginxRules(names []string, now time.Time) {
 		log.Printf("dry-run: nginx rules from central (%s) are not written", key)
 		return
 	}
+	if _, err := os.Stat(a.nginxDir); errors.Is(err, fs.ErrNotExist) {
+		// No nginx on this server: nothing to apply, nothing to report.
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.state.Nginx != nil { // a failure recorded by 2.8.1
+			a.state.Nginx = nil
+			if a.statePath != "" {
+				if err := a.state.save(a.statePath); err != nil {
+					log.Printf("save state: %v", err)
+				}
+			}
+		}
+		return
+	}
 	changed, err := a.writeNginxRules(names)
 	switch {
 	case err != nil:
