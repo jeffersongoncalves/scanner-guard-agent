@@ -2,6 +2,13 @@
 
 All notable changes to `scanner-guard-agent` will be documented in this file.
 
+## 2.8.2 - 2026-11-27
+
+### Changelog
+
+* d00c8474b9257434e504dca86f76d0ee8f25e7a6: Update CHANGELOG (@github-actions[bot])
+* 47d33793ae202374533af637bd5bd0ae2802e4ff: fix: skip the optional nginx rules on servers without nginx (#27) (@jeffersongoncalves)
+
 ## 2.8.1 - 2026-11-27
 
 ### Changelog
@@ -89,6 +96,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
   
   
   
+  
   ```
 
 ### Fixed
@@ -100,6 +108,7 @@ All notable changes to `scanner-guard-agent` will be documented in this file.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.2.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
@@ -150,6 +159,7 @@ No config change.
 sudo grep url /etc/scanner-guard/agent.yaml   # must be https or empty
 curl -fsSL https://raw.githubusercontent.com/jeffersongoncalves/scanner-guard-agent/main/install.sh | sudo VERSION=2.0.0 sh
 sudo systemctl restart scanner-guard-agent
+
 
 
 
