@@ -361,7 +361,9 @@ Then turn it on for every server from the central app (`nginx_rules` in the pull
 ship with the agent, which writes the ones turned on to `/var/lib/scanner-guard/nginx/{uri,path,agent}.conf`,
 runs `nginx -t` and reloads, or puts the previous files back. From the service, `nginx -t` runs in
 a transient unit (`systemd-run`): the agent's sandbox can't open nginx's logs or ports, as the test
-does. `status` shows the last outcome; a set that failed is tried again every 10 minutes. The maps of `scanner-guard-rules.conf`
+does. `status` shows the last outcome; a set that failed is tried again every 10 minutes. An agent
+without a rule reading `/var/log/nginx/scanner-guard.log` (`web_attack`), a server without nginx
+included, leaves them alone: nobody would ban on the 403s. The maps of `scanner-guard-rules.conf`
 include those files; on a rules file written before 2.8.0, run `nginx-init` once to add the includes
 (tested, reverted if `nginx -t` fails). Don't also uncomment the rule in `scanner-guard-rules.conf`: it
 would be listed twice. Without a central app, uncomment it there instead.
